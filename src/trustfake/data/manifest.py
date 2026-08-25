@@ -84,6 +84,14 @@ PROFILES: dict[str, dict[str, int]] = {
     # stay identical to "full" (same seed, same validation permutation, which
     # does not depend on the train-shard count).
     "train": {"fit": 30, "calib": 8, "test": 26},
+    # Hyperparameter sweeping: small everywhere, because a sweep spends its
+    # budget on the NUMBER of configurations, not on the size of each. Its
+    # calib and test are deliberately smaller than "full"/"train", so sweep
+    # numbers RANK configurations and must never be reported as results --
+    # the winner is re-run at "train" for anything quotable. Keeping the
+    # sweep on its own slice is also what stops a 20-config search from
+    # quietly becoming 20 attempts at the reported test split.
+    "sweep": {"fit": 4, "calib": 2, "test": 4},
     # As "train", plus a sealed holdout drawn from train shards disjoint from
     # fit. All 34 validation shards are consumed by calib+test, so unused
     # train shards are the only genuinely-unseen pool.

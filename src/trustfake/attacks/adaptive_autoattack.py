@@ -147,6 +147,40 @@ class AdaptiveAutoAttack(AdversarialAttack):
             best_margin = torch.where(take, margin, best_margin)
         return best
 
+    @staticmethod
+    def _should_halve(
+        improved_count: torch.Tensor,
+        window: int,
+        eta: torch.Tensor,
+        eta_at_checkpoint: torch.Tensor,
+        best_margin: torch.Tensor,
+        best_at_checkpoint: torch.Tensor,
+        rho: float = 0.75,
+    ) -> torch.Tensor:
+        r"""Croce & Hein's checkpoint condition, per sample.
+
+        Halve the step size when EITHER holds:
+
+        1. fewer than ``rho`` of the window's iterations improved on the
+           previous iterate -- the search is not making progress at this
+           step size;
+        2. the step size and the best value are both unchanged since the
+           previous checkpoint -- the window achieved nothing at all and was
+           not already slowed down for it, which is what oscillation across
+           the boundary looks like.
+
+        Condition 2 is not redundant: a window can improve on the previous
+        iterate often enough to clear condition 1 while never improving the
+        best value, which is exactly a step size large enough to keep
+        overshooting.
+
+        `improved_count` must be counted against the PREVIOUS ITERATE, not
+        against the running best. See :meth:`_apgd`.
+        """
+        no_progress = improved_count < rho * window
+        frozen = (eta == eta_at_checkpoint) & (best_margin == best_at_checkpoint)
+        return no_progress | frozen
+
     def _apgd(
         self,
         model: TrustFakeWrapper,
@@ -241,12 +275,15 @@ class AdaptiveAutoAttack(AdversarialAttack):
             # Checkpoint: where the window bought little, halve the step and
             # restart from the best point found so far.
             if (step + 1) % window == 0:
-                no_progress = improved_count < rho * window
-                frozen = (eta == eta_at_checkpoint) & (
-                    best_margin == best_at_checkpoint
+                stalled = self._should_halve(
+                    improved_count,
+                    window,
+                    eta,
+                    eta_at_checkpoint,
+                    best_margin,
+                    best_at_checkpoint,
+                    rho,
                 )
-                stalled = no_progress | frozen
-
                 eta = torch.where(stalled, eta * 0.5, eta)
                 x_cur = torch.where(stalled.view(expand), best, x_cur)
                 x_prev = x_cur.clone()
