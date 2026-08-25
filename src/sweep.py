@@ -160,23 +160,33 @@ def _run(script: str, overrides: list, log: pathlib.Path) -> bool:
 
 
 def _latest_test_metrics(name: str) -> dict[str, float]:
-    """Last row of the newest test-time metrics.csv for an experiment."""
+    """Every test-time metric for an experiment, merged across conditions.
+
+    Each `src/test.py` invocation writes its OWN `version_N/metrics.csv`, and
+    a configuration is evaluated once per condition -- so the clean, ACE and
+    over-confidence numbers live in three different files. Reading only the
+    newest returns whichever condition happened to run last, which silently
+    reduced `confidence_resilience` to a single attack and would have ranked
+    the whole grid on half its objective without erroring.
+
+    Files are merged oldest-first so a re-run of a condition wins over the
+    run it replaced.
+    """
     root = pathlib.Path(os.environ["OUTPUT_PATH"]) / name
     candidates = sorted(
         root.rglob("test_lightning_logs/version_*/metrics.csv"),
         key=lambda p: p.stat().st_mtime,
     )
-    if not candidates:
-        return {}
     merged: dict[str, float] = {}
-    with candidates[-1].open() as handle:
-        for row in csv.DictReader(handle):
-            for key, value in row.items():
-                if value not in ("", None):
-                    try:
-                        merged[key] = float(value)
-                    except ValueError:
-                        pass
+    for path in candidates:
+        with path.open() as handle:
+            for row in csv.DictReader(handle):
+                for key, value in row.items():
+                    if value not in ("", None):
+                        try:
+                            merged[key] = float(value)
+                        except ValueError:
+                            pass
     return merged
 
 
@@ -195,7 +205,9 @@ def confidence_resilience(metrics: dict[str, float]) -> float | None:
         for cond in ("ace_uint8", "overconf")
         if f"{cond}_fd_auroc" in metrics
     ]
-    if not scores:
+    if len(scores) < 2:
+        # Both conditions or nothing: averaging one attack and calling it
+        # resilience against two would rank the grid on half its objective.
         return None
     return sum(scores) / len(scores)
 
