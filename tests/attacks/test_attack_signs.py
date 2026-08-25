@@ -22,6 +22,7 @@ from trustfake.attacks import (
     DeepFool,
     OverConfidence,
     ParamACE,
+    TrustRegion,
     UncertaintyFGSM,
     UnderConfidence,
 )
@@ -159,8 +160,9 @@ def test_ace_signs(fitted):
         BIM(eps=0.1, steps=10),
         DeepFool(eps=2.0, steps=50),
         CarliniWagner(eps=2.0, c=5.0, steps=60),
+        TrustRegion(eps=0.1, steps=20),
     ],
-    ids=["pgd", "bim", "deepfool", "cw"],
+    ids=["pgd", "bim", "deepfool", "cw", "tr"],
 )
 def test_prediction_attacks_move_accuracy_down(attack, fitted):
     """The prediction family's defining sign: accuracy drops. A prediction

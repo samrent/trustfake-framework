@@ -9,6 +9,7 @@ from .evidence_targeted import EvidenceTargetedPGD
 from .fgsm import FGSM
 from .param_ace import ParamACE
 from .pgd import PGD
+from .trust_region import TrustRegion
 from .uncertainty_fgsm import UncertaintyFGSM
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "FAB",
     "SquareAttack",
     "AutoAttackLinf",
+    "TrustRegion",
 ]

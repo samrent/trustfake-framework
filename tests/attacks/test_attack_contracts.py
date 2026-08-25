@@ -25,6 +25,7 @@ from trustfake.attacks import (
     DeepFool,
     OverConfidence,
     ParamACE,
+    TrustRegion,
     UncertaintyFGSM,
     UnderConfidence,
 )
@@ -47,6 +48,7 @@ ATTACKS = [
     CarliniWagner(eps=EPS, steps=30, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     OverConfidence(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     UnderConfidence(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    TrustRegion(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
 ]
 
 ATTACK_IDS = [attack.name for attack in ATTACKS]
