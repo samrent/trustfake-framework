@@ -19,7 +19,11 @@ from trustfake.models.wrapper import (
     MCDropoutWrapper,
 )
 from trustfake.pipes.train import (
+    ConfidenceAdversarialTrainingModule,
+    ConfidenceRegularisedTrainingModule,
     EvidentialAdversarialTrainingModule,
+    HybridAdversarialTrainingModule,
+    MARTTrainingModule,
     PGDAdversarialTrainingModule,
     StandardTrainingModule,
     TRADESTrainingModule,
@@ -35,10 +39,41 @@ WRAPPERS = {
 
 TRAINING_PIPES = {
     "standard": StandardTrainingModule,
-    "evidential_adversarial": EvidentialAdversarialTrainingModule,
+    # Label-axis defences: the adversary tries to change the prediction.
     "pgd_at": PGDAdversarialTrainingModule,
     "trades": TRADESTrainingModule,
+    "at_kl": HybridAdversarialTrainingModule,
+    "mart": MARTTrainingModule,
+    # Confidence-axis defences: the adversary tries to change the confidence
+    # attached to an unchanged prediction -- the failure this harness measures.
+    "at_conf": ConfidenceAdversarialTrainingModule,
+    "conf_reg": ConfidenceRegularisedTrainingModule,
+    # Evidential.
+    "evidential_adversarial": EvidentialAdversarialTrainingModule,
 }
+
+# Arms sharing the adversarial-training scaffold (inner PGD, eps warm-up,
+# robust validation).
+_ADVERSARIAL_PIPES = (
+    PGDAdversarialTrainingModule,
+    TRADESTrainingModule,
+    HybridAdversarialTrainingModule,
+    MARTTrainingModule,
+    ConfidenceAdversarialTrainingModule,
+)
+# `beta` weights a different term in each arm (TRADES: KL against natural CE;
+# AT+KL: consistency KL against adversarial CE; MART: misclassification-weighted
+# KL). One shared key would make three incomparable settings look like one.
+_BETA_KEYS = {
+    TRADESTrainingModule: "trades_beta",
+    HybridAdversarialTrainingModule: "at_kl_beta",
+    MARTTrainingModule: "mart_beta",
+}
+# Every arm except `standard` can take a weight-space inner maximisation.
+_AWP_CAPABLE = _ADVERSARIAL_PIPES + (
+    ConfidenceRegularisedTrainingModule,
+    EvidentialAdversarialTrainingModule,
+)
 
 
 @hydra.main(
@@ -116,17 +151,26 @@ def run_train_pipe(cfg: DictConfig) -> None:
         pipe_kwargs = {
             "beta": cfg.get("beta", 1.0),
             "divergence_mode": cfg.get("rea_mode", "ikl"),
+            "ikl_ema": cfg.get("ikl_ema", 0.9),
             "adv_eps": cfg.get("adv_eps", 8 / 255),
             "adv_steps": cfg.get("adv_steps", 10),
         }
-    elif pipe_cls in (PGDAdversarialTrainingModule, TRADESTrainingModule):
+    elif pipe_cls in _ADVERSARIAL_PIPES:
         pipe_kwargs = {
             "eps": cfg.get("adv_eps", 8 / 255),
             "steps": cfg.get("adv_steps", 10),
             "eps_warmup_epochs": cfg.get("adv_warmup_epochs", 0),
+            "robust_val_steps": cfg.get("robust_val_steps", 0),
         }
-        if pipe_cls is TRADESTrainingModule:
-            pipe_kwargs["beta"] = cfg.get("trades_beta", 6.0)
+        beta_key = _BETA_KEYS.get(pipe_cls)
+        if beta_key is not None:
+            pipe_kwargs["beta"] = cfg.get(beta_key, 6.0)
+    elif pipe_cls is ConfidenceRegularisedTrainingModule:
+        pipe_kwargs = {"lambda_reg": cfg.get("lambda_reg", 1.0)}
+
+    if pipe_cls in _AWP_CAPABLE:
+        pipe_kwargs["awp_gamma"] = cfg.get("awp_gamma", 0.0)
+        pipe_kwargs["awp_warmup_epochs"] = cfg.get("awp_warmup_epochs", 0)
 
     training_module = pipe_cls(
         model=module,

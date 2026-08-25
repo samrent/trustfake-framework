@@ -18,18 +18,29 @@ from torch import Tensor
 from trustfake.attacks import EvidenceTargetedPGD
 from trustfake.losses import LogDirichletDivergence
 from trustfake.pipes.train.abc import TrainingModule
+from trustfake.pipes.train.awp import AWPMixin
 from trustfake.pydantic.model_output_schema import ClassificationModelOutput
 
 __all__ = ["EvidentialAdversarialTrainingModule"]
 
 
-class EvidentialAdversarialTrainingModule(TrainingModule):
+class EvidentialAdversarialTrainingModule(AWPMixin, TrainingModule):
     """EV-AT training module. Requires an evidential wrapper and an
     EvidentialLoss as ``model.loss_fn``.
+
+    Composes with AWP (`awp_gamma > 0`), which the paper's ablation reports as
+    an additional, non-substitutable gain on top of the evidential loss and
+    REA. The weight adversary here attacks `L_EV + beta * L_REA` rather than a
+    cross-entropy proxy, so the ablation is about the loss actually trained.
 
     Args:
         beta: weight of the robust evidence-alignment term L_REA.
         divergence_mode: discrepancy for the adversary and L_REA (ikl|kl|l2).
+        ikl_ema: EMA rate of the IKL class-wise global weight. The paper
+            defines that weight as a running mean of the per-class predictive
+            means; this exposes how fast the mean forgets, which matters on a
+            short run where the buffer never converges and the weight is
+            still partly the uniform initialisation.
         adv_eps: L_inf budget of the evidence-targeted adversary.
         adv_steps: PGD steps of the adversary.
     """
@@ -39,6 +50,7 @@ class EvidentialAdversarialTrainingModule(TrainingModule):
         *args,
         beta: float = 1.0,
         divergence_mode: str = "ikl",
+        ikl_ema: float = 0.9,
         adv_eps: float = 8 / 255,
         adv_steps: int = 10,
         **kwargs,
@@ -55,7 +67,7 @@ class EvidentialAdversarialTrainingModule(TrainingModule):
             )
         self.beta = beta
         self.divergence = LogDirichletDivergence(
-            self._num_classes, mode=divergence_mode
+            self._num_classes, mode=divergence_mode, ema=ikl_ema
         )
         self.adversary = EvidenceTargetedPGD(
             eps=adv_eps, steps=adv_steps, divergence=self.divergence
@@ -66,18 +78,38 @@ class EvidentialAdversarialTrainingModule(TrainingModule):
         # anneal the evidential-loss KL weight (Sensoy's lambda ramp)
         self.model.loss_fn.set_epoch(self.current_epoch)
 
+    def awp_objective(self, inputs: Tensor, x_adv: Tensor, targets: Tensor) -> Tensor:
+        """`L_EV + beta * L_REA`, so the weight adversary attacks the loss
+        actually being trained rather than a cross-entropy stand-in for it.
+
+        Both sides are recomputed here because the weight perturbation needs
+        a graph rooted at the current weights; reusing the tensors from
+        `compute_loss` would attach the perturbation to a stale graph.
+        """
+        clean_logits = self.model.forward(inputs)[0]
+        alpha, eta_clean = self.model.dirichlet(clean_logits)
+        adv_logits = self.model.forward(x_adv)[0]
+        _, eta_adv = self.model.dirichlet(adv_logits)
+        return self.model.loss_fn(alpha, targets) + self.beta * self.divergence(
+            eta_clean, eta_adv, targets
+        )
+
     def compute_loss(
         self, batch: list[Tensor, Tensor]
     ) -> tuple[Tensor, ClassificationModelOutput]:
         x, y = batch[0], batch[1]
 
+        # Inner max: evidence-targeted adversary (returns a detached x_adv),
+        # generated at the current weights.
+        x_adv = self.adversary(self.model, x, y)
+        # Optional weight-space inner max. Applied before either side of the
+        # loss is computed, so both terms describe the same (perturbed) model.
+        self.apply_awp(x, x_adv, y)
+
         # Clean path (with gradient): evidential loss + the reference eta.
         logits, probs, preds, uncertainty = self.model.forward(x)
         alpha, eta_clean = self.model.dirichlet(logits)
         l_ev = self.model.loss_fn(alpha, y)
-
-        # Inner max: evidence-targeted adversary (returns a detached x_adv).
-        x_adv = self.adversary(self.model, x, y)
 
         # Robust evidence alignment on the adversarial path (with gradient).
         adv_logits = self.model.forward(x_adv)[0]
