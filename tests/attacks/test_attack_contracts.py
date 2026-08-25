@@ -23,8 +23,10 @@ from trustfake.attacks import (
     PGD,
     CarliniWagner,
     DeepFool,
+    OverConfidence,
     ParamACE,
     UncertaintyFGSM,
+    UnderConfidence,
 )
 
 EPS = 0.05
@@ -43,6 +45,8 @@ ATTACKS = [
     BIM(eps=EPS, steps=5, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     DeepFool(eps=EPS, steps=20, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     CarliniWagner(eps=EPS, steps=30, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    OverConfidence(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    UnderConfidence(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
 ]
 
 ATTACK_IDS = [attack.name for attack in ATTACKS]

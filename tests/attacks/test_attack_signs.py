@@ -20,8 +20,10 @@ from trustfake.attacks import (
     PGD,
     CarliniWagner,
     DeepFool,
+    OverConfidence,
     ParamACE,
     UncertaintyFGSM,
+    UnderConfidence,
 )
 from trustfake.metrics.evaluation.selective_classification import aurc_from_scores
 from trustfake.metrics.uncertainty.probs import MultiClassMaxProbability
@@ -197,3 +199,27 @@ def test_param_ace_true_omega_requires_labels(fitted):
     model, x, y, _, _ = fitted
     with pytest.raises(ValueError, match="requires ground-truth"):
         ParamACE(eps=0.05, omega="true").run(model, x, targets=None)
+
+
+def test_overconfidence_preserves_labels_and_raises_confidence(fitted):
+    """Over-confidence minimises H toward the frozen clean prediction, so the
+    argmax can only be reinforced (label-preserving by construction) while
+    confidence in the predicted class rises."""
+    model, x, y, preds_clean, _ = fitted
+    adv = OverConfidence(eps=0.05, steps=20)(model, x, y)
+    with torch.no_grad():
+        _, probs_adv, preds_adv, _ = model(adv)
+        _, probs_clean, _, _ = model(x)
+    assert torch.equal(preds_adv, preds_clean)  # exact, by construction
+    conf_clean = probs_clean.gather(1, preds_clean[:, None]).squeeze(1)
+    conf_adv = probs_adv.gather(1, preds_clean[:, None]).squeeze(1)
+    assert conf_adv.mean() > conf_clean.mean()
+
+
+def test_underconfidence_raises_uncertainty(fitted):
+    """Under-confidence drives predictions toward uniform, raising the mean
+    uncertainty. It makes no label-preservation claim."""
+    model, x, y, _, unc_clean = fitted
+    adv = UnderConfidence(eps=0.05, steps=20)(model, x, y)
+    _, unc_adv = _scores(model, adv)
+    assert unc_adv.mean() > unc_clean.mean()

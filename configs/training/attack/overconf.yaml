@@ -1,0 +1,8 @@
+# Over-confidence attack (Ledda et al. 2025). Label-free, label-preserving by
+# construction: confidence up on the frozen clean prediction, accuracy fixed.
+attack:
+  _target_: trustfake.attacks.OverConfidence
+  eps: 0.03137  # 8/255
+  steps: 20
+  clip_min: 0.0
+  clip_max: 1.0

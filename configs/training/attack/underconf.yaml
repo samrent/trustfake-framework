@@ -1,0 +1,8 @@
+# Under-confidence attack (Ledda et al. 2025). Label-free; drives predictions
+# toward maximum entropy (KL to uniform). NOT label-preserving by construction.
+attack:
+  _target_: trustfake.attacks.UnderConfidence
+  eps: 0.03137  # 8/255
+  steps: 20
+  clip_min: 0.0
+  clip_max: 1.0
