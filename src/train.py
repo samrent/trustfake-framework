@@ -20,7 +20,9 @@ from trustfake.models.wrapper import (
 )
 from trustfake.pipes.train import (
     EvidentialAdversarialTrainingModule,
+    PGDAdversarialTrainingModule,
     StandardTrainingModule,
+    TRADESTrainingModule,
 )
 
 logger = get_logger("training-pipe")
@@ -34,6 +36,8 @@ WRAPPERS = {
 TRAINING_PIPES = {
     "standard": StandardTrainingModule,
     "evidential_adversarial": EvidentialAdversarialTrainingModule,
+    "pgd_at": PGDAdversarialTrainingModule,
+    "trades": TRADESTrainingModule,
 }
 
 
@@ -115,6 +119,14 @@ def run_train_pipe(cfg: DictConfig) -> None:
             "adv_eps": cfg.get("adv_eps", 8 / 255),
             "adv_steps": cfg.get("adv_steps", 10),
         }
+    elif pipe_cls in (PGDAdversarialTrainingModule, TRADESTrainingModule):
+        pipe_kwargs = {
+            "eps": cfg.get("adv_eps", 8 / 255),
+            "steps": cfg.get("adv_steps", 10),
+            "eps_warmup_epochs": cfg.get("adv_warmup_epochs", 0),
+        }
+        if pipe_cls is TRADESTrainingModule:
+            pipe_kwargs["beta"] = cfg.get("trades_beta", 6.0)
 
     training_module = pipe_cls(
         model=module,
