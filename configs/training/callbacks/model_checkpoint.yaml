@@ -5,7 +5,11 @@ model_checkpoint:
   # train_config.yaml -- selecting a defence on the clean metric selects it on
   # what it deliberately trades away.
   monitor: ${selection_metric}
-  mode: max
+  # Must track selection_metric's direction. Hardcoding `max` here while the
+  # monitor was configurable meant pointing selection_metric at any
+  # lower-is-better metric the harness already logs (val_aurc, val_augrc,
+  # val_eaurc, val_loss) silently kept the WORST epoch.
+  mode: ${selection_mode}
   filename: "${model.name}-{epoch:02d}"
   save_top_k: 1
   save_last: true

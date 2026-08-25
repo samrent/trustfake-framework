@@ -124,17 +124,31 @@ class AttackResult:
         accepted_logits: Logits from the forward pass that accepted the
             perturbation, shape (B, C). None when the attack has no accept
             test.
-        l2_norm: Per-sample L2 norm of the perturbation, shape (B,). Set by
-            the minimum-norm attacks (DeepFool, C&W, BB, PDPGD), for which
-            this -- not `eps` -- is the quantity being minimised and the one
-            a robustness curve should be read against. None for fixed-budget
-            attacks, where it adds nothing to `effective_eps`.
+        l2_norm: Per-sample L2 norm of the perturbation, shape (B,). Set only
+            by the minimum-norm attacks that actually minimise L2 (DeepFool,
+            C&W, BB, and PDPGD in ``norm="l2"`` mode) -- for those this, not
+            `eps`, is the quantity being minimised. None for fixed-budget
+            attacks, where it adds nothing to `effective_eps`, and None for
+            PDPGD in ``norm="linf"`` mode, which minimises L_inf: reporting
+            the L2 norm of an L_inf-minimised perturbation would put a
+            different quantity on the same axis of the same curve.
+        minimised_norm: ``"l2"``, ``"linf"`` or None -- which norm a
+            minimum-norm attack minimised, and therefore which field carries
+            the answer. None for fixed-budget attacks. Read `minimised`
+            rather than picking the field by hand.
         success: Per-sample flag, shape (B,), for whether the attack reached
             its own goal -- a changed prediction for the minimum-norm
             attacks. None when the attack does not define one. A minimum-norm
             attack that fails on a sample returns that sample unperturbed
             rather than a perturbation that does nothing, so this is the
             field that separates "robust" from "not attacked".
+
+    A failed minimum-norm sample is returned clean, which means its reported
+    norm is 0 -- the same number a zero-cost break would produce. Every
+    aggregate over `l2_norm`, `effective_eps` or `minimised` must therefore
+    be MASKED BY `success`: an unmasked mean is pulled toward zero by exactly
+    the samples the attack could not break, i.e. it reports the model as less
+    robust the more robust it actually is.
     """
 
     perturbed: torch.Tensor
@@ -143,6 +157,23 @@ class AttackResult:
     accepted_logits: torch.Tensor | None = None
     l2_norm: torch.Tensor | None = None
     success: torch.Tensor | None = None
+    minimised_norm: str | None = None
+
+    @property
+    def minimised(self) -> torch.Tensor | None:
+        """Per-sample value of the quantity the attack actually minimised.
+
+        The field it comes from depends on the norm, so reading it by hand is
+        how a table ends up plotting L2 against L_inf. None for a
+        fixed-budget attack. Mask by `success` before aggregating.
+        """
+        if self.minimised_norm is None:
+            return None
+        if self.minimised_norm == "l2":
+            return self.l2_norm
+        if self.minimised_norm == "linf":
+            return self.effective_eps
+        raise ValueError(f"unknown minimised_norm {self.minimised_norm!r}")
 
 
 class AdversarialAttack(ABC):

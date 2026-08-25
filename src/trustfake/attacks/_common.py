@@ -14,6 +14,7 @@ __all__ = [
     "project_l2",
     "project_l1_ball",
     "class_margin",
+    "finalise_minimum_norm",
 ]
 
 
@@ -116,6 +117,50 @@ def project_l1_ball(
     projected = flat.sign() * (absv - theta[:, None]).clamp_min(0.0)
 
     return torch.where(outside[:, None], projected, flat).view_as(v)
+
+
+def finalise_minimum_norm(
+    model: TrustFakeWrapper,
+    inputs: torch.Tensor,
+    x_adv: torch.Tensor,
+    preds: torch.Tensor,
+    clean_logits: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Final accounting shared by every minimum-norm attack.
+
+    Success is measured on the *capped* candidate: a flip that only survives
+    outside the reported eps is not a success inside it. Every sample that
+    fails that test is then returned CLEAN, so its reported norm is exactly
+    0 rather than whatever the search happened to leave behind.
+
+    That last part is the point. Without it, an attack that walks the sample
+    somewhere and then gets capped reports ``l2_norm == eps`` on a failure,
+    while an attack that gives up reports 0 -- the same outcome, opposite
+    numbers, and a curve that mixes them is measuring which implementation
+    it ran rather than which model. Making the failure value a constant 0
+    across all four attacks makes `success` the only thing that separates
+    "unbreakable" from "broken for free", which is what it is for.
+
+    Args:
+        model: The model under attack, already in eval mode.
+        inputs: Clean inputs.
+        x_adv: The attack's candidate, already capped to `eps`.
+        preds: The model's clean predictions.
+        clean_logits: Logits on `inputs`, reported back for failed samples.
+
+    Returns:
+        ``(perturbed, success, logits)`` -- the batch to report, the
+        per-sample success flag, and the logits of the forward that decided
+        it (clean logits where the attack failed).
+    """
+    with torch.no_grad():
+        logits, _, adv_preds, _ = model(x_adv)
+    success = adv_preds.detach() != preds
+
+    expand = (-1,) + (1,) * (inputs.ndim - 1)
+    perturbed = torch.where(success.view(expand), x_adv, inputs).detach()
+    reported = torch.where(success[:, None], logits.detach(), clean_logits.detach())
+    return perturbed, success, reported
 
 
 def class_margin(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:

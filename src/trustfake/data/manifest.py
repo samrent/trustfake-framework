@@ -94,6 +94,21 @@ PROFILES: dict[str, dict[str, int]] = {
 GEOMETRY_FILTERS: tuple[str, ...] = ("none", "square", "nonsquare", "matched")
 
 
+def _require(condition: bool, message: str) -> None:
+    """Enforce one clause of the leakage firewall.
+
+    A one-line stand-in for `assert`, and deliberately not `assert`: the
+    interpreter removes assertions under `python -O`, which would turn the
+    firewall into a comment precisely when a long unattended run is being
+    optimised. Kept as a helper so each clause stays as short and as
+    readable as the assertion it replaced -- a firewall nobody can read at a
+    glance is one nobody maintains.
+    """
+    if not condition:
+        logger.error(message)
+        raise ValueError(message)
+
+
 def assign_shards(
     train_shards: list[str],
     val_shards: list[str],
@@ -102,7 +117,17 @@ def assign_shards(
 ) -> dict[str, list[str]]:
     """
     Assign shard names to roles. Pure: a function of the sorted name lists,
-    the per-role counts and the seed, with the firewall enforced by assertion.
+    the per-role counts and the seed, with the firewall enforced by `raise`.
+
+    The structural checks below are `raise`, never `assert`, and that is the
+    difference between a firewall and a comment about one. `python -O`
+    strips every `assert` from the bytecode, so an assert-guarded firewall
+    silently disappears in exactly the setting it is most needed -- a long
+    unattended job someone optimised -- and a swapped role assignment then
+    returns validation shards as `fit` and train shards as `calib` with no
+    error anywhere. A leak has no runtime symptom: the run completes and
+    reports a number that is simply not what it claims to be. The length
+    check above was already a `raise`; these are now consistent with it.
 
     Args:
         train_shards: Names of the train-* shards available.
@@ -143,23 +168,32 @@ def assign_shards(
             counts["fit"] : counts["fit"] + counts["holdout"]
         ]
 
-    # Structural assertions: these ARE the firewall, not comments about it.
-    assert all(Path(s).name.startswith("train-") for s in assign["fit"]), (
-        "fit must come from train shards only"
+    # Structural checks: these ARE the firewall, not comments about it --
+    # which is why they raise rather than assert (see the docstring).
+    _require(
+        all(Path(s).name.startswith("train-") for s in assign["fit"]),
+        "fit must come from train shards only",
     )
-    assert all(
-        Path(s).name.startswith("validation-") for s in assign["calib"] + assign["test"]
-    ), "calib and test must come from validation shards only"
-    assert not (set(assign["calib"]) & set(assign["test"])), (
+    _require(
+        all(
+            Path(s).name.startswith("validation-")
+            for s in assign["calib"] + assign["test"]
+        ),
+        "calib and test must come from validation shards only",
+    )
+    _require(
+        not (set(assign["calib"]) & set(assign["test"])),
         "calib and test share a shard -- post-hoc quantities would be fitted "
-        "on reported data"
+        "on reported data",
     )
     if "holdout" in assign:
-        assert not (set(assign["fit"]) & set(assign["holdout"])), (
-            "holdout shares a shard with fit -- it would not be unseen"
+        _require(
+            not (set(assign["fit"]) & set(assign["holdout"])),
+            "holdout shares a shard with fit -- it would not be unseen",
         )
-        assert all(Path(s).name.startswith("train-") for s in assign["holdout"]), (
-            "holdout must come from train shards only"
+        _require(
+            all(Path(s).name.startswith("train-") for s in assign["holdout"]),
+            "holdout must come from train shards only",
         )
     return assign
 

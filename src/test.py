@@ -124,6 +124,13 @@ def run_eval_pipe(cfg: DictConfig):
         uncertainty_score=cfg["uncertainty_score"],
         **wrapper_kwargs,
     )
+    # `real_class` is needed here as well as by the moderation policy below.
+    # The detection AUROC folds every non-real class to "fake", so leaving it
+    # at the constructor default would have `detection_auroc` measuring class 0
+    # while every moderation indicator in the SAME table measured the
+    # configured class -- a disagreement inside one report, and one that stays
+    # invisible for as long as the configured value happens to be 0.
+    real_class = cfg.get("real_class", 0)
     try:
         eval_module = ClassificationEvaluationModule.load_from_checkpoint(
             checkpoint_path=best_model_path,
@@ -131,6 +138,7 @@ def run_eval_pipe(cfg: DictConfig):
             model_output_schema_cls=ClassificationModelOutput,
             num_classes=datamodule.num_classes,
             attack=condition,
+            real_class=real_class,
         )
     except Exception as e:
         logger.exception(f"Error loading model from checkpoint {best_model_path}: {e}")
@@ -178,7 +186,6 @@ def run_eval_pipe(cfg: DictConfig):
             probs = np.concatenate(probs_list)
             targets = np.concatenate(targets_list)
             uncertainty = np.concatenate(unc_list)
-            real_class = cfg.get("real_class", 0)
             p_fake = 1.0 - probs[:, real_class]
             y_binary = (targets != real_class).astype(int)
             # sla_missed_fake is the second, asymmetric SLA: residual risk

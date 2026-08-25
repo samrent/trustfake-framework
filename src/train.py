@@ -160,7 +160,6 @@ def run_train_pipe(cfg: DictConfig) -> None:
             "eps": cfg.get("adv_eps", 8 / 255),
             "steps": cfg.get("adv_steps", 10),
             "eps_warmup_epochs": cfg.get("adv_warmup_epochs", 0),
-            "robust_val_steps": cfg.get("robust_val_steps", 0),
         }
         beta_key = _BETA_KEYS.get(pipe_cls)
         if beta_key is not None:
@@ -171,6 +170,15 @@ def run_train_pipe(cfg: DictConfig) -> None:
     if pipe_cls in _AWP_CAPABLE:
         pipe_kwargs["awp_gamma"] = cfg.get("awp_gamma", 0.0)
         pipe_kwargs["awp_warmup_epochs"] = cfg.get("awp_warmup_epochs", 0)
+
+    # EVERY pipe, not just the adversarial ones. If the classical baselines
+    # could be selected on robustness and EV-AT / conf_reg / standard could
+    # not, the comparison would be between selection protocols rather than
+    # between methods -- and asking for it on those arms used to die with
+    # "Early stopping conditioned on metric val_robust_accuracy which is not
+    # available", one epoch into the run.
+    pipe_kwargs["robust_val_steps"] = cfg.get("robust_val_steps", 0)
+    pipe_kwargs["robust_val_eps"] = cfg.get("robust_val_eps", None)
 
     training_module = pipe_cls(
         model=module,

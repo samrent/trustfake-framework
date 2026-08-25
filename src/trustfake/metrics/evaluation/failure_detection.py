@@ -63,6 +63,14 @@ class FailureAUROC(BinaryAUROC):
         """AUROC, or NaN where it is undefined."""
         if self.thresholds is not None:  # binned mode keeps no raw scores
             return super().compute()
+        # Test for an empty split BEFORE concatenating: `dim_zero_cat` raises
+        # on an empty list, so the numel() guard below could never be reached.
+        # An empty split is undefined, not an error -- a geometry filter or a
+        # per-class breakout can legitimately select no rows, and that should
+        # report NaN like every other undefined case rather than abort a run
+        # that has already done all its work.
+        if not self.preds:
+            return torch.tensor(float("nan"))
         preds, target = dim_zero_cat(self.preds), dim_zero_cat(self.target)
         undefined = (
             preds.numel() == 0

@@ -17,6 +17,7 @@ from torch import Tensor
 
 from trustfake.attacks import EvidenceTargetedPGD
 from trustfake.losses import LogDirichletDivergence
+from trustfake.pipes.train._common import RobustValidationMixin
 from trustfake.pipes.train.abc import TrainingModule
 from trustfake.pipes.train.awp import AWPMixin
 from trustfake.pydantic.model_output_schema import ClassificationModelOutput
@@ -24,7 +25,9 @@ from trustfake.pydantic.model_output_schema import ClassificationModelOutput
 __all__ = ["EvidentialAdversarialTrainingModule"]
 
 
-class EvidentialAdversarialTrainingModule(AWPMixin, TrainingModule):
+class EvidentialAdversarialTrainingModule(
+    AWPMixin, RobustValidationMixin, TrainingModule
+):
     """EV-AT training module. Requires an evidential wrapper and an
     EvidentialLoss as ``model.loss_fn``.
 
@@ -100,7 +103,8 @@ class EvidentialAdversarialTrainingModule(AWPMixin, TrainingModule):
         x, y = batch[0], batch[1]
 
         # Inner max: evidence-targeted adversary (returns a detached x_adv),
-        # generated at the current weights.
+        # generated at the current weights. `EvidenceTargetedPGD` puts the
+        # model in eval mode itself, like every attack in trustfake.attacks.
         x_adv = self.adversary(self.model, x, y)
         # Optional weight-space inner max. Applied before either side of the
         # loss is computed, so both terms describe the same (perturbed) model.
@@ -118,11 +122,23 @@ class EvidentialAdversarialTrainingModule(AWPMixin, TrainingModule):
 
         loss = l_ev + self.beta * l_rea
 
-        # Refresh the IKL class-wise global statistics for the next step.
-        self.divergence.update_global_stats(probs.detach(), y)
+        # Refresh the IKL class-wise global statistics for the next step --
+        # from TRAINING batches only. `validation_step` calls this same
+        # method, so without the guard the running per-class means absorbed
+        # validation rows into a training-time statistic that feeds both
+        # L_REA and the evidence-targeted adversary. Worse, Lightning's
+        # sanity-check pass runs before the first training batch, so the
+        # buffer was switched out of its DKL fallback by validation data
+        # before any training data had been seen, and its value then depended
+        # on `limit_val_batches` and `check_val_every_n_epoch`.
+        if self.training:
+            self.divergence.update_global_stats(probs.detach(), y)
 
-        # Guard so compute_loss stays callable outside a Trainer (tests).
-        if self._trainer is not None:
+        # Guard so compute_loss stays callable outside a Trainer (tests), and
+        # log only from the training path: the two hooks have different
+        # `on_step` defaults, so a bare `train_l_ev` column otherwise held the
+        # VALIDATION value while the training one hid in `train_l_ev_epoch`.
+        if self._trainer is not None and self.training:
             self.log("train_l_ev", l_ev, on_epoch=True)
             self.log("train_l_rea", l_rea, on_epoch=True)
 

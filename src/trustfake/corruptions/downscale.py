@@ -37,8 +37,17 @@ class Downscale(ImageCorruption):
     Unlike the codec conditions this stays in float: it is a resampling
     condition, not a file round-trip, so no uint8 grid snap is implied.
 
+    `factor` must be strictly greater than 1. At exactly 1 both legs resize
+    to the size they were already at, so the output is bit-identical to the
+    input -- but it is reported under the `downscale_1` metric prefix, which
+    puts a copy of the CLEAN row into the corruption column of a robustness
+    table. A reader has no way to tell it apart from a detector that shrugged
+    off the condition, and that is the single most flattering error a
+    robustness table can make. `codec.py` refuses the same shape of no-op by
+    pinning WebP to `lossless=False`; this refuses it outright.
+
     Args:
-        factor (float): Shrink divisor, >= 1. 2 means "halve, then double".
+        factor (float): Shrink divisor, > 1. 2 means "halve, then double".
         clip_min (float): Minimum valid value for a corrupted input.
         clip_max (float): Maximum valid value for a corrupted input.
     """
@@ -47,8 +56,12 @@ class Downscale(ImageCorruption):
         self, factor: float = 2.0, clip_min: float = 0.0, clip_max: float = 1.0
     ):
         super().__init__(clip_min=clip_min, clip_max=clip_max)
-        if float(factor) < 1.0:
-            msg = f"Downscale factor must be >= 1, got {factor}."
+        if float(factor) <= 1.0:
+            msg = (
+                f"Downscale factor must be > 1, got {factor}. factor=1 is a "
+                "no-op: it would report the clean condition under a "
+                "corruption's name."
+            )
             raise ValueError(msg)
         self.factor = float(factor)
 

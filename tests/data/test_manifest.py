@@ -4,6 +4,10 @@ Each test defends one property of the leakage firewall. They are pure --
 no data, no network, no GPU.
 """
 
+import subprocess
+import sys
+import textwrap
+
 import pytest
 
 from trustfake.data.manifest import PROFILES, assign_shards
@@ -74,3 +78,70 @@ def test_smoke_profile_fits_in_five_shards():
     """The offline pre-flight must not need the full dataset on disk."""
     a = assign_shards(TRAIN[:2], VAL[:3], PROFILES["smoke"], seed=0)
     assert {len(v) for v in a.values()} <= {1, 2}
+
+
+def test_swapped_roles_are_refused():
+    """Hand the function validation shards where train shards belong and it
+    must refuse: the whole point of the manifest is that a leak cannot be
+    produced without editing the module."""
+    with pytest.raises(ValueError, match="fit must come from train shards only"):
+        assign_shards(VAL, TRAIN, PROFILES["smoke"], seed=0)
+
+
+# The subprocess body for the test below. Kept as a module constant so the
+# quoting stays readable; run through `python -O`, where every `assert` is
+# stripped from the bytecode before the module is even executed.
+_OPTIMISED_FIREWALL_PROBE = textwrap.dedent(
+    """
+    import sys
+
+    from trustfake.data.manifest import PROFILES, assign_shards
+
+    # Prove the interpreter really is optimised, so this can never pass by
+    # accidentally running a normal python and exercising live assertions.
+    asserts_stripped = True
+    try:
+        assert False, "assertions are live"
+    except AssertionError:
+        asserts_stripped = False
+    if not asserts_stripped:
+        print("ASSERTIONS-STILL-LIVE")
+        sys.exit(2)
+
+    train = [f"train-{i:05d}-of-00249.parquet" for i in range(8)]
+    val = [f"validation-{i:05d}-of-00034.parquet" for i in range(8)]
+
+    try:
+        # Roles deliberately swapped: validation shards offered as the train
+        # pool, train shards as the validation pool. Under an assert-based
+        # firewall this returns validation shards as `fit` and train shards
+        # as `calib`, with no error at all.
+        assign_shards(val, train, PROFILES["smoke"], seed=0)
+    except ValueError as error:
+        print(f"REFUSED: {error}")
+        sys.exit(0)
+    print("LEAK-PRODUCED-SILENTLY")
+    sys.exit(1)
+    """
+)
+
+
+def test_the_firewall_holds_under_an_optimised_interpreter():
+    """`python -O` strips `assert`, so an assert-based firewall is not a
+    firewall -- it is a comment that runs in development and vanishes in the
+    unattended job someone optimised. A leak has no runtime symptom: the run
+    completes and reports a number that is not what it claims to be, so the
+    check has to survive the interpreter flag that removes assertions.
+    """
+    completed = subprocess.run(
+        [sys.executable, "-O", "-c", _OPTIMISED_FIREWALL_PROBE],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, (
+        f"firewall did not hold under python -O: {completed.stdout}{completed.stderr}"
+    )
+    assert "REFUSED:" in completed.stdout
+    assert "fit must come from train shards only" in completed.stdout

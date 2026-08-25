@@ -27,6 +27,7 @@ from torch import Tensor
 from torch.nn.functional import cross_entropy
 
 from trustfake.attacks._common import model_logits
+from trustfake.pipes.train._common import eval_mode
 
 __all__ = ["AWPMixin"]
 
@@ -103,6 +104,12 @@ class AWPMixin:
         if not self._awp_active():
             return
 
+        # A second call before the restore would overwrite the record of the
+        # first, stranding that perturbation in the weights forever. Reachable:
+        # any optimizer that re-evaluates the closure (LBFGS) calls
+        # `compute_loss` several times per `on_train_batch_end`.
+        self.restore_awp()
+
         named = [
             (name, param)
             for name, param in self.model.named_parameters()
@@ -111,7 +118,10 @@ class AWPMixin:
         if not named:
             return
 
-        with torch.enable_grad():
+        # The weight adversary must see the deployed function, not a
+        # batch-statistics one: in train mode this extra forward would fold
+        # another batch into every BatchNorm running estimate.
+        with torch.enable_grad(), eval_mode(self.model):
             loss = self.awp_objective(inputs, x_adv, targets)
             grads = torch.autograd.grad(
                 loss, [param for _, param in named], allow_unused=True
@@ -143,3 +153,20 @@ class AWPMixin:
         # applied to w. See the module docstring.
         self.restore_awp()
         super().on_train_batch_end(outputs, batch, batch_idx)
+
+    def on_train_epoch_end(self):
+        # Belt and braces: nothing should reach here with a perturbation
+        # outstanding, but if a batch died between perturb and restore the
+        # weights are currently w + v, and anything that reads them next --
+        # validation, a checkpoint write -- would see the perturbed model.
+        self.restore_awp()
+        super().on_train_epoch_end()
+
+    def on_exception(self, exception: BaseException) -> None:
+        # `ModelCheckpoint(save_on_exception=True)` writes on the way out, so
+        # without this the file on disk is the perturbed model rather than the
+        # trained one -- a corrupted checkpoint that loads and runs.
+        self.restore_awp()
+        parent = getattr(super(), "on_exception", None)
+        if parent is not None:
+            parent(exception)
