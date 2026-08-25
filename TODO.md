@@ -4,6 +4,21 @@ State as of the `port/tier1` branch (PR #1). Everything below is what is *not*
 done; what is done is in the README and the PR description. 256 unit tests pass,
 but nothing here has been trained or measured on real data.
 
+## 0. Validated so far
+
+- Device abstraction (`trustfake.utils.resolve_device`): CUDA → MPS → CPU, so
+  the same code runs on the 3090 and on this Mac's Metal.
+- The full pipeline runs end-to-end on real SID-Set (a streamed partial slice,
+  240 train / 360 val): standard and EV-AT train + test on MPS, with attacks,
+  temperature scaling and WP4 moderation.
+- The thesis reproduces on real data. On a small real detector, ACE leaves
+  accuracy identical (0.558 → 0.558) while failure-detection AUROC collapses
+  (0.555 → 0.0003) and the WP4 residual risk on auto-decisions goes 14% → 48%
+  at a 15% clean SLA — an accuracy monitor sees a healthy system. The geometry
+  baseline `width == height → fake` scores 0.97 on the real test slice.
+- These are on ~200 images / 8 epochs — direction is right, magnitudes are not
+  publishable. Section 1 is still needed for real numbers.
+
 ## 1. Produce the results (blocking — needs GPU + dataset)
 
 The method and baselines are implemented and unit-tested, but no numbers exist
@@ -34,7 +49,7 @@ reimplemented (a weak/wrong attack silently overstates robustness).
 - [ ] **A³** (Adaptive AutoAttack, CVPR 2022) — author repo, not on PyPI.
 - [ ] **PDPGD** (Matyasko & Chau 2021) — author repo; primal-dual proximal.
 
-## 3. Open question for the PI
+## 3. Open question for the PI (deferred — immaterial while testing the pipeline)
 
 - [ ] Is the official SID-Set test split available to the group? The manifest
       currently carves "test" from the validation split (the authors withhold
