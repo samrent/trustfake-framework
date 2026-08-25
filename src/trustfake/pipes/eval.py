@@ -2,6 +2,7 @@ import os
 from abc import ABC
 
 import lightning as pl
+import numpy as np
 import torch
 from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import (
@@ -17,6 +18,7 @@ from trustfake.metrics.evaluation import (
     get_multiclass_classification_metrics,
     get_selective_classification_metrics,
 )
+from trustfake.metrics.moderation import ModerationPolicy
 from trustfake.models.wrapper import TrustFakeWrapper
 from trustfake.pydantic.model_output_schema import (
     ClassificationModelOutput,
@@ -45,6 +47,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         model_output_schema_cls: ClassificationModelOutput,
         num_classes: int,
         attack: AdversarialAttack | None = None,
+        moderation_policy: ModerationPolicy | None = None,
     ):
         """
         Args:
@@ -65,6 +68,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         self._model_output_schema_cls = model_output_schema_cls
         self._num_classes = num_classes
         self.attack = attack
+        self.moderation_policy = moderation_policy
 
         # Classification metrics
         self.nat_classification_metrics = self.classification_metrics.clone(
@@ -88,6 +92,8 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             "nat": {
                 "uncertainties": [],
                 "errors": [],
+                "probs": [],
+                "targets": [],
             },
         }
 
@@ -106,6 +112,8 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self._storage[f"{self.attack.name}"] = {
                 "uncertainties": [],
                 "errors": [],
+                "probs": [],
+                "targets": [],
             }
 
     def training_step(self, batch, batch_idx):
@@ -186,6 +194,8 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             output.uncertainty.detach().cpu()
         )
         self._storage[storage_key]["errors"].append(errors.detach().cpu())
+        self._storage[storage_key]["probs"].append(output.probs.detach().cpu())
+        self._storage[storage_key]["targets"].append(targets.detach().cpu())
 
     def test_step(self, batch: list[torch.Tensor, torch.Tensor], batch_idx):
         """
@@ -326,12 +336,48 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self.log_dict(adv_calibration_metrics)
             self.adv_calibration_metrics.reset()
 
+        # Selective moderation (WP4): apply the frozen policy per condition.
+        self._log_moderation()
+
         # Save storage to disk for post-hoc analysis
         self._save_storage_to_disk()
         # Clear storage after saving to disk to free up memory
         for key in self._storage:
-            self._storage[key]["uncertainties"] = []
-            self._storage[key]["errors"] = []
+            for field in self._storage[key]:
+                self._storage[key][field] = []
+
+    def _log_moderation(self) -> None:
+        """Apply the frozen moderation policy to each stored condition and log
+        the deployment indicators. The uncertainty gate (two-axis rule) is
+        reported alongside when the policy carries a t_unc."""
+        if self.moderation_policy is None:
+            return
+        for key, store in self._storage.items():
+            if not store["probs"]:
+                continue
+            probs = torch.cat(store["probs"]).numpy()
+            targets = torch.cat(store["targets"]).numpy()
+            uncertainty = torch.cat(store["uncertainties"]).numpy()
+            prefix = "nat" if key == "nat" else self.attack.name
+            r = self.moderation_policy.evaluate(probs, targets)
+            for name in (
+                "coverage",
+                "review_rate",
+                "residual_risk",
+                "missed_fake_rate",
+                "false_flag_rate",
+            ):
+                value = r[name]
+                if value is not None and not np.isnan(value):
+                    self.log(f"{prefix}_moderation_{name}", float(value))
+            if self.moderation_policy.t_unc is not None:
+                r2 = self.moderation_policy.evaluate(
+                    probs, targets, uncertainty, use_gate=True
+                )
+                for name in ("review_rate", "residual_risk"):
+                    value = r2[name]
+                    if value is not None and not np.isnan(value):
+                        self.log(f"{prefix}_moderation_2axis_{name}", float(value))
 
     def _save_storage_to_disk(self):
         """
@@ -347,20 +393,10 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             return
         os.makedirs(log_dir, exist_ok=True)
         for key in self._storage:
-            self._storage[key]["uncertainties"] = torch.cat(
-                self._storage[key]["uncertainties"], dim=0
-            )
-            self._storage[key]["errors"] = torch.cat(
-                self._storage[key]["errors"], dim=0
-            )
+            uncertainties = torch.cat(self._storage[key]["uncertainties"], dim=0)
+            errors = torch.cat(self._storage[key]["errors"], dim=0)
             path = os.path.join(log_dir, f"storage_{key}.pt")
-            torch.save(
-                {
-                    "uncertainties": self._storage[key]["uncertainties"],
-                    "errors": self._storage[key]["errors"],
-                },
-                path,
-            )
+            torch.save({"uncertainties": uncertainties, "errors": errors}, path)
 
     @property
     def classification_metrics(self) -> MetricCollection:

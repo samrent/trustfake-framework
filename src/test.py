@@ -3,12 +3,18 @@ from pathlib import Path
 
 import hydra
 import lightning
+import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 
 from trustfake.instantiator import config_parsing, save_experiment_config
 from trustfake.logging import add_handler, get_logger
 from trustfake.metrics.calibration import calibrate_temperature
+from trustfake.metrics.moderation import (
+    ModerationPolicy,
+    fit_thresholds,
+    fit_uncertainty_gate,
+)
 from trustfake.models.wrapper import (
     BaseWrapper,
     EvidentialWrapper,
@@ -138,6 +144,52 @@ def run_eval_pipe(cfg: DictConfig):
             logger.info(f"Applied fitted temperature T = {temperature:.4f}")
     else:
         logger.info("Calibration disabled (calibrate=false); temperature = 1.0")
+
+    # WP4 selective moderation: fit the policy on the clean calib split (after
+    # temperature) and freeze it. calib is shard-disjoint from test.
+    if cfg.get("moderate", True):
+        calib_loader = getattr(datamodule, "calib_dataloader", None)
+        if calib_loader is None:
+            logger.warning("No calib_dataloader; skipping moderation fitting.")
+        else:
+            import numpy as np
+
+            datamodule.setup()
+            probs_list, targets_list, unc_list = [], [], []
+            eval_module.model.eval()
+            with torch.no_grad():
+                for inputs, targets in calib_loader():
+                    _, probs, _, uncertainty = eval_module.model(
+                        inputs.to(eval_module.device)
+                    )
+                    probs_list.append(probs.detach().cpu().numpy())
+                    targets_list.append(targets.detach().cpu().numpy())
+                    unc_list.append(uncertainty.detach().cpu().numpy())
+            probs = np.concatenate(probs_list)
+            targets = np.concatenate(targets_list)
+            uncertainty = np.concatenate(unc_list)
+            real_class = cfg.get("real_class", 0)
+            p_fake = 1.0 - probs[:, real_class]
+            y_binary = (targets != real_class).astype(int)
+            t_low, t_high = fit_thresholds(
+                p_fake, y_binary, sla_residual_risk=cfg.get("moderation_sla", 0.05)
+            )
+            t_unc = fit_uncertainty_gate(
+                uncertainty,
+                clean_review_budget=cfg.get("moderation_review_budget", 0.10),
+            )
+            eval_module.moderation_policy = ModerationPolicy(
+                t_low=t_low, t_high=t_high, real_class=real_class, t_unc=t_unc
+            )
+            logger.info(
+                f"Moderation policy fitted on clean calib: t_low={t_low:.4f}, "
+                f"t_high={t_high:.4f}, t_unc={t_unc:.4f}, "
+                f"SLA residual risk <= {cfg.get('moderation_sla', 0.05):.0%}"
+            )
+            if eval_module.moderation_policy.infeasible:
+                logger.warning(
+                    "Moderation SLA infeasible: policy degrades to review-everything."
+                )
 
     logger.info("Starting testing...")
     trainer.test(eval_module, datamodule=datamodule)

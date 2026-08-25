@@ -12,6 +12,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from trustfake.attacks import FGSM
+from trustfake.metrics.moderation import ModerationPolicy
 from trustfake.metrics.uncertainty.probs import MultiClassMaxProbability
 from trustfake.models.wrapper import BaseWrapper
 from trustfake.pipes import ClassificationEvaluationModule
@@ -46,7 +47,7 @@ def _loader():
     return DataLoader(TensorDataset(x, y), batch_size=8)
 
 
-def _run(tmp_path, attack=None, temperature=1.0):
+def _run(tmp_path, attack=None, temperature=1.0, moderation_policy=None):
     module = _wrapper()
     module.temperature = temperature
     eval_module = ClassificationEvaluationModule(
@@ -54,6 +55,7 @@ def _run(tmp_path, attack=None, temperature=1.0):
         model_output_schema_cls=ClassificationModelOutput,
         num_classes=NUM_CLASSES,
         attack=attack,
+        moderation_policy=moderation_policy,
     )
     logger = L.pytorch.loggers.CSVLogger(save_dir=str(tmp_path))
     trainer = L.Trainer(
@@ -88,3 +90,19 @@ def test_temperature_changes_calibration_but_not_accuracy(tmp_path):
     assert float(cold["nat_accuracy"]) == float(warm["nat_accuracy"])
     assert float(cold["nat_nll"]) != float(warm["nat_nll"])
     assert float(cold["nat_ece"]) != float(warm["nat_ece"])
+
+
+def test_moderation_indicators_reported(tmp_path):
+    """With a frozen policy, the eval pipe reports the WP4 indicators, and the
+    two-axis (uncertainty-gated) variant when the policy carries a t_unc."""
+    policy = ModerationPolicy(t_low=0.3, t_high=0.7, real_class=0, t_unc=0.5)
+    metrics = _run(tmp_path, moderation_policy=policy)
+    assert "nat_moderation_coverage" in metrics
+    assert "nat_moderation_review_rate" in metrics
+    assert "nat_moderation_false_flag_rate" in metrics
+    assert "nat_moderation_2axis_review_rate" in metrics
+
+
+def test_no_policy_means_no_moderation_keys(tmp_path):
+    metrics = _run(tmp_path)  # moderation_policy=None
+    assert not any("moderation" in k for k in metrics)
