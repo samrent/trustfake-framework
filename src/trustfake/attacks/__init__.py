@@ -4,6 +4,7 @@ from .autoattack_wrappers import APGD, FAB, AutoAttackLinf, SquareAttack
 from .bim import BIM
 from .cw import CarliniWagner
 from .deepfool import DeepFool
+from .evidence_targeted import EvidenceTargetedPGD
 from .fgsm import FGSM
 from .param_ace import ParamACE
 from .pgd import PGD
@@ -16,6 +17,7 @@ __all__ = [
     "ACE",
     "ParamACE",
     "UncertaintyFGSM",
+    "EvidenceTargetedPGD",
     # prediction-targeted (native)
     "FGSM",
     "BIM",
