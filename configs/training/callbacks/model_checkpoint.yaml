@@ -1,7 +1,11 @@
 model_checkpoint:
   _target_: lightning.pytorch.callbacks.ModelCheckpoint
-  monitor: val_f1_score
+  # Defaults to clean macro-F1. For a defence arm, set
+  # selection_metric: val_robust_accuracy (and robust_val_steps > 0) in
+  # train_config.yaml -- selecting a defence on the clean metric selects it on
+  # what it deliberately trades away.
+  monitor: ${selection_metric}
   mode: max
-  filename: "${model.name}-{epoch:02d}-{val_f1_score:.2f}"
+  filename: "${model.name}-{epoch:02d}"
   save_top_k: 1
   save_last: true

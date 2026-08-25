@@ -1,5 +1,99 @@
 # Changelog
 
+## TF_02 — 2026-08-25
+
+Second milestone: the attack and defence surfaces are complete, and the two
+protocol controls the dataset demands are in. Nothing in `TODO.md` §2 (unported
+attacks) or §4 (protocol/method extensions) is outstanding. 545 unit tests;
+every arm and every new attack exercised end-to-end on real SID-Set shards on
+the 3090.
+
+### Attacks — the three that were "not yet ported" (§2), plus two gaps
+- **BB** (Brendel & Bethge, NeurIPS 2019), **PDPGD** (Matyasko & Chau 2021) and
+  **A³** (Liu et al., CVPR 2022), all as **native reimplementations** — no
+  non-PyPI research repo and no new heavyweight dependency. Where an
+  implementation departs from its reference the docstring says so and a test
+  pins the consequence.
+- **PGD-L2**: a fixed budget in L2, missing from the port. Robustness does not
+  transfer between norms, so an L∞-only table cannot say the model is robust.
+- **`ace_uint8`**: ACE on the 1/255 pixel grid — the realisable file-upload
+  threat model, as distinct from an attacker with post-decode tensor access.
+- **Attack taxonomy** (`attack_registry()`): family / direction / label use /
+  norm / minimum-norm, built by instantiating each attack so it cannot drift
+  from the code. Results can now be grouped by threat family, and rows produced
+  with ground truth can be told from rows produced without it.
+- `AttackResult` gained `l2_norm` and `success`. For a minimum-norm attack
+  `eps` is a cap, not a budget: the norm it *needed* is the result, and a
+  sample it could not solve is returned unperturbed and flagged rather than
+  silently reported as a tiny perturbation.
+- Ground-truth use is now opt-in (`use_labels`) on FGSM/BIM/PGD/PGD-L2,
+  defaulting to the model's own prediction (the realisable threat model).
+
+### Defences — the confidence axis, and the modifier
+- **`at_conf`**: adversarial training whose inner maximisation is the
+  *confidence* attack rather than cross-entropy. The first arm in the harness
+  aimed at the failure the harness measures.
+- **`conf_reg`**: a direct penalty on confident mistakes, no inner adversary.
+- **`at_kl`**: the AT + consistency-KL hybrid — cross-entropy on the
+  *adversarial* forward, which is what distinguishes it from TRADES.
+- **`mart`** (Wang et al. 2020): margin-aware AT with a
+  misclassification-weighted KL — the only classical arm whose objective is a
+  function of the model's own confidence.
+- **AWP** (Wu et al. 2020) as a composable modifier (`awp_gamma`), not an arm:
+  it applies to every pipe including EV-AT, where the weight adversary attacks
+  `L_EV + β·L_REA` rather than a cross-entropy proxy.
+- **Robust model selection**: `robust_val_steps` + `selection_metric`, so a
+  defence arm can be selected on `val_robust_accuracy` instead of on the clean
+  macro-F1 it deliberately trades away.
+- `ikl_ema` exposed: the IKL global weight is a running mean that does not
+  converge on a short run, so its rate is a live knob rather than a constant.
+
+### Protocol controls (§4)
+- **Common corruptions** as a first-class evaluation condition
+  (`+corruption=jpeg|webp|downscale|gaussian_noise|gaussian_blur`), kept out of
+  the eps-ball contract because a corruption is distributional shift, not a
+  bounded perturbation.
+- **Geometry-controlled evaluation**, the honest answer to the dataset's
+  `width == height → fake` shortcut: a `geometry_filter`
+  (`none|square|nonsquare|matched`) on the reported splits, and a `squarecrop`
+  pre-transform applied *before* the resize (after it, every image is already
+  square and the crop is a no-op). Plus the decode-scale residue baseline that
+  a centre crop does **not** remove, and a protocol-aware `headline()` so a
+  controlled row never prints the uncontrolled 0.98 beside it.
+
+### Metrics and moderation
+- `n_operating_points` beside AURC — the guard against reading a saturated,
+  temperature-dependent AURC as a precise number; float64 confidence upcast so
+  fp32 softmax saturation cannot manufacture tie blocks.
+- `risk@coverage`, `coverage_at_risk`, achieved (never target) coverage;
+  uniform as well as block weighting; `rc_curve` now returns thresholds.
+- **Detection AUROC** separated from failure AUROC and both reported — they
+  answer different questions and conflating them is the cheap error.
+- Failure AUROC returns `NaN`, not `0.0`, where it is undefined (no errors, all
+  errors, constant confidence) — a split with no errors was reading as perfect
+  failure detection.
+- ECE variants (equal-mass, binary-domain, L1/L2/max) and top-1 accuracy beside
+  the macro average.
+- Moderation: `review_of_fakes` / `review_of_reals` (a gate that reviews the
+  right traffic now scores differently from one that reviews random traffic),
+  `n`, `accuracy` beside `full_coverage_error`, `p_fake_from(logits, T)`, and a
+  markdown/JSON report of the one-axis vs two-axis comparison.
+
+### Corrected
+- An invariant inherited from the original code was **false**: the uncertainty
+  gate was documented as unable to raise residual risk. It can — residual risk
+  is a rate over a shrinking denominator, so escalating correct decisions
+  raises it while the count of wrong auto-decisions is unchanged. The real
+  invariants are on counts; docstrings corrected and pinned by tests.
+- BB's trust-region radius now adapts. With a fixed radius, clipping to the
+  valid pixel range can reject a step, and the attack then retries the same
+  rejected step forever — stalling at its random starting point while still
+  reporting a perturbation norm.
+- PDPGD's L1-ball projection no longer uses `cumsum`, which has no
+  deterministic CUDA kernel and therefore raised under the harness's
+  `use_deterministic_algorithms(True)`. Replaced with a bisection that uses
+  only deterministic reductions.
+
 ## TF_01 — 2026-08-25
 
 First milestone: the TrustFake harness's advances ported into the framework

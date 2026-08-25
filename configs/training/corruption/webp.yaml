@@ -1,0 +1,12 @@
+# Lossy WebP re-encoding of the model input: what the large platforms
+# actually serve. Its artifacts are not JPEG's (block prediction smooths
+# where JPEG rings), so a detector tuned to JPEG blocking can be blind to
+# it -- which is why both rungs are reported rather than one standing in.
+# Metric prefix / log dir: webp_q<quality>.
+corruption:
+  _target_: trustfake.corruptions.WebPCompression
+  # WebP quality, 1..100. 80 is WP1's ladder setting
+  # (wp1/src/features.py:84).
+  quality: 80
+  clip_min: 0.0
+  clip_max: 1.0

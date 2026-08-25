@@ -1,7 +1,7 @@
 import torch
 
 from trustfake.attacks._common import project_linf
-from trustfake.attacks.abc import AdversarialAttack, AttackResult
+from trustfake.attacks.abc import AdversarialAttack, AttackFamily, AttackResult
 from trustfake.losses import LogDirichletDivergence
 from trustfake.models.wrapper import TrustFakeWrapper
 
@@ -40,6 +40,8 @@ class EvidenceTargetedPGD(AdversarialAttack):
         seed: seed for the random start.
         clip_min, clip_max: valid input range.
     """
+
+    family = AttackFamily.EVIDENCE
 
     def __init__(
         self,

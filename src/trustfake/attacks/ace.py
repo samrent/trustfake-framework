@@ -1,6 +1,11 @@
 import torch
 
-from trustfake.attacks.abc import AdversarialAttack, AttackResult
+from trustfake.attacks.abc import (
+    AdversarialAttack,
+    AttackDirection,
+    AttackFamily,
+    AttackResult,
+)
 from trustfake.models.wrapper import TrustFakeWrapper
 
 __all__ = ["ACE"]
@@ -38,6 +43,12 @@ class ACE(AdversarialAttack):
         iters (int): Epsilon-halving attempts per sample.
         quantize (bool): Snap candidate steps to the 1/255 pixel grid.
     """
+
+    family = AttackFamily.CONFIDENCE
+    direction = AttackDirection.BOTH
+    # Ground truth chooses the direction per sample; without it ACE can
+    # only push confidence down (see `run`).
+    uses_labels = True
 
     def __init__(
         self,

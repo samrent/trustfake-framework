@@ -103,6 +103,13 @@ what makes it a meaningful baseline for a selective-classification method.
 
 Start a Jupyter Lab server with access to the project environment and the [`notebooks/`](notebooks/) folder. This allows you to run and edit the notebooks directly in your browser.
 
+[`selective_risk_under_attack.ipynb`](notebooks/selective_risk_under_attack.ipynb)
+is the demonstrator for what this project is about: it trains a small detector
+on synthetic data (no dataset download, about a minute on CPU) and shows a
+confidence attack leaving accuracy bit-identical while the risk-coverage curve
+inverts and the frozen WP4 policy degrades on both axes at once. Start there if
+you want the argument before the API.
+
 **Docker:**
 ```bash
 make jupyter
@@ -139,9 +146,10 @@ Attacks live in [`src/trustfake/attacks/`](src/trustfake/attacks/) and implement
 **To add a new attack:**
 
 1. Create a class in `src/trustfake/attacks/` that subclasses `AdversarialAttack`, implements `name` and `__call__`, and keeps its perturbation within `self.eps` (use the inherited `self._clamp()` to enforce `clip_min`/`clip_max`). Use `fgsm.py` as a reference implementation. An attack that produces metadata (per-sample epsilon, an accept-check forward) overrides `run` instead, returns an `AttackResult`, and implements `__call__` as `self.run(...).perturbed` -- see `ace.py`; the evaluation pipe then scores the accept-check forward directly instead of re-running the model.
-2. Export it from [`src/trustfake/attacks/__init__.py`](src/trustfake/attacks/__init__.py).
-3. Add a Hydra config for it under [`configs/training/attack/`](configs/training/attack/) (see `fgsm.yaml`), so it can be selected with `+attack=<name>` when running `src/test.py`.
-4. Register it in `ATTACKS` in [`tests/attacks/test_attack_contracts.py`](tests/attacks/test_attack_contracts.py) (see below) to get it covered by the validation suite.
+2. Declare its taxonomy by overriding the class attributes that differ from the defaults — `family`, `direction`, `uses_labels`, `norm`, `minimum_norm` (see `AttackFamily` in `abc.py`). The defaults describe a fixed-budget, label-free, L∞ prediction attack, so only the attacks that differ have to say so. This is what lets a results table be grouped by threat family and lets a reader tell which rows assumed an attacker who holds the ground truth.
+3. Export it from [`src/trustfake/attacks/__init__.py`](src/trustfake/attacks/__init__.py). `attack_registry()` picks it up from there automatically.
+4. Add a Hydra config for it under [`configs/training/attack/`](configs/training/attack/) (see `fgsm.yaml`), so it can be selected with `+attack=<name>` when running `src/test.py`. Encode any parameter that changes the threat model into the config *name* (`ace` vs `ace_uint8`), so two runs cannot collide in the log directory.
+5. Register it in `ATTACKS` in [`tests/attacks/test_attack_contracts.py`](tests/attacks/test_attack_contracts.py) (see below) to get it covered by the validation suite. A minimum-norm attack also needs a test that it actually minimises — the contract battery only checks that it stays inside a budget, and a stalled min-norm attack passes that while reporting robustness the model does not have.
 
 **To validate an implementation:** [`tests/attacks/test_attack_contracts.py`](tests/attacks/test_attack_contracts.py) runs the same battery of checks against every attack in its `ATTACKS` list — that it stays within its `eps` L∞ ball, stays within `[clip_min, clip_max]`, doesn't mutate the input tensor or the model's weights, restores the model's training mode, returns a detached output, actually perturbs the input, is a no-op at `eps=0`, and is deterministic for a fixed model/input. Run it with:
 ```bash
@@ -159,27 +167,50 @@ Selected with `+attack=<name>` when running `src/test.py`. Two families: a
 **confidence-targeted** attack collapses selective risk while leaving accuracy
 untouched (label preservation is a constraint), whereas a
 **prediction-targeted** attack collapses it as a side effect of destroying
-accuracy. `eps` is an L∞ budget except for the minimum-norm attacks
-(DeepFool, C&W, FAB), where it is a cap on the result's norm; those are noted.
+accuracy. Reporting both under one "robustness" heading is what makes the
+first one invisible, so the family is data on the attack
+(`trustfake.attacks.attack_registry()`), not prose in this table.
+
+`eps` is an L∞ budget except for the **minimum-norm** attacks (DeepFool, C&W,
+BB, PDPGD, FAB), where it is a cap on the *result* and the quantity to report
+is `AttackResult.l2_norm` — the norm the attack actually needed — together
+with `AttackResult.success`, since a minimum-norm attack that fails on a
+sample returns it unperturbed rather than inventing a perturbation.
 
 | name | family | reference | notes |
 |---|---|---|---|
 | `fgsm` | prediction | Goodfellow et al. 2015 | single step |
 | `bim` | prediction | Kurakin et al. 2017 | iterative, no random start |
 | `pgd` | prediction | Madry et al. 2018 | random start, seeded |
+| `pgd_l2` | prediction | Madry et al. 2018 | fixed budget in **L2**, not L∞ |
 | `deepfool` | prediction | Moosavi-Dezfooli et al. 2016 | min-norm; `eps` is an L2 cap |
 | `cw` | prediction | Carlini & Wagner 2017 | L2; `eps` is an L2 cap |
+| `bb` | prediction | Brendel & Bethge 2019 | min-norm; boundary walk, adaptive trust region |
+| `pdpgd` | prediction | Matyasko & Chau 2021 | min-norm; primal-dual proximal, L∞ or L2 |
 | `tr` | prediction | Yao et al. 2019 | trust-region, adaptive step |
+| `a3` | prediction | Liu et al. 2022 | adaptive init + online discarding |
 | `apgd` | prediction | Croce & Hein 2020 | via `autoattack` |
 | `fab` | prediction | Croce & Hein 2020 | min-norm; via `autoattack` |
 | `square` | prediction | Andriushchenko et al. 2020 | query-based; via `autoattack` |
 | `autoattack` | prediction | Croce & Hein 2020 | ensemble; class-count-safe composition |
-| `uncertainty_fgsm` | confidence | Disrupting Deep Uncertainty Estimation | label-free; attacks the uncertainty score |
+| `uncertainty_fgsm` | uncertainty | Disrupting Deep Uncertainty Estimation | label-free; attacks the uncertainty score |
 | `ace` | confidence | Galil & El-Yaniv 2021 | per-sample eps search, accept test |
+| `ace_uint8` | confidence | Galil & El-Yaniv 2021 | ACE on the 1/255 grid: the file-upload threat model |
 | `param_ace` | confidence | Buerger et al. 2024 (arXiv:2405.13922) | (η,ω)-ACE family |
 | `overconf` | confidence | Ledda et al. 2025 | label-free, label-preserving |
 | `underconf` | confidence | Ledda et al. 2025 | label-free; toward max entropy |
-| `evidence_pgd` | confidence | EV-AT (arXiv:2607.03075) | maximises Dirichlet drift; needs `wrapper=evidential` |
+| `evidence_pgd` | evidence | EV-AT (arXiv:2607.03075) | maximises Dirichlet drift; needs `wrapper=evidential` |
+
+`bb`, `pdpgd` and `a3` are **native reimplementations**. Each is otherwise
+only available from a research repository that is not on PyPI (or, for BB, via
+a heavyweight `foolbox` dependency), and a vendored attack that cannot be
+verified offline is the worst kind of dependency here: an attack that is
+subtly weak does not fail, it reports robustness the model does not have.
+Where an implementation departs from its reference the module docstring says
+so and a test pins the consequence — see
+`tests/attacks/test_min_norm_attacks.py`, which cross-checks the three
+minimum-norm attacks against each other precisely because a stalled one still
+returns a plausible number.
 
 The `autoattack`-package wrappers drive the model through a logits adapter and
 seed their randomised components for determinism; the ensemble excludes the
@@ -188,21 +219,85 @@ few-class detector (see the wrapper docstring). Attacks with an accept test or
 a min-norm search return an `AttackResult` carrying the per-sample effective
 epsilon and the accept-check logits, which the evaluation pipe scores directly.
 
-Not yet ported: **A³** (adaptive AutoAttack), **PDPGD**, and **BB** (Brendel &
-Bethge, via foolbox) each need a separate non-PyPI research repository or a new
-heavyweight dependency, so none could be vendored and verified offline. Adding
-any of them is a dependency decision worth taking deliberately.
+**Ground truth is opt-in.** `fgsm`, `bim`, `pgd` and `pgd_l2` attack the
+model's *own* clean prediction by default, which is the realisable threat
+model — an attacker in production does not hold the labels. `use_labels=true`
+switches them to the supplied ground truth, a strictly stronger attacker and
+therefore a different row in a results table, not a variant of the same one.
+`attack_registry()` records which mode a row was produced in.
+
+### Common corruptions
+
+Selected with `+corruption=<name>`, mutually exclusive with `+attack=`. The
+keystone benchmark reports clean + adversarial + common-corruption, and a
+detector that survives an L∞ ball but not a JPEG re-encode is not deployable:
+re-encoding is what every platform does to every image it serves.
+
+| name | condition |
+|---|---|
+| `jpeg` | JPEG re-encode (`jpeg_q40`) |
+| `webp` | WebP re-encode (`webp_q80`) |
+| `downscale` | downscale and back up (`downscale_2`) |
+| `gaussian_noise` | additive Gaussian noise |
+| `gaussian_blur` | Gaussian blur |
+
+A corruption is a distributional-shift condition, not a bounded perturbation,
+so `eps` is `inf` and the L∞ contract does not apply — they are deliberately
+kept out of the eps-ball battery in `tests/attacks/`. Corruptions are applied
+to the model input (post-resize), the ImageNet-C convention; see
+`src/trustfake/corruptions/abc.py` for why, and for what that does *not*
+model.
 
 ## Methods and training pipelines
 
 The training pipeline is chosen with `experiment.training_pipe`:
 
-| pipe | what | key config |
-|---|---|---|
-| `standard` | ordinary training | — |
-| `pgd_at` | PGD adversarial training (Madry 2018) | `adv_eps`, `adv_steps`, `adv_warmup_epochs` |
-| `trades` | TRADES (Zhang 2019) | `trades_beta`, `adv_eps`, `adv_steps` |
-| `evidential_adversarial` | Evidential Adversarial Training (EV-AT) | `beta`, `rea_mode`, `adv_eps`, `adv_steps` |
+| pipe | axis | what | key config |
+|---|---|---|---|
+| `standard` | — | ordinary training | — |
+| `pgd_at` | label | PGD adversarial training (Madry 2018) | `adv_eps`, `adv_steps`, `adv_warmup_epochs` |
+| `trades` | label | TRADES (Zhang 2019) | `trades_beta`, `adv_eps`, `adv_steps` |
+| `at_kl` | label | AT + consistency KL (hybrid) | `at_kl_beta`, `adv_eps`, `adv_steps` |
+| `mart` | label | MART (Wang 2020) | `mart_beta`, `adv_eps`, `adv_steps` |
+| `at_conf` | **confidence** | AT against the *confidence* attack | `adv_eps`, `adv_steps` |
+| `conf_reg` | **confidence** | penalty on confident mistakes, no adversary | `lambda_reg` |
+| `evidential_adversarial` | evidence | Evidential Adversarial Training (EV-AT) | `beta`, `rea_mode`, `ikl_ema`, `adv_eps`, `adv_steps` |
+
+The **axis** column is the one that matters. Every classical arm defends the
+*label* axis: it assumes the adversary wants to change the prediction. But the
+attack that breaks a moderation layer does not change the prediction at all —
+ACE and the over-confidence attack leave accuracy bit-identical and move only
+the confidence attached to it. `at_conf` and `conf_reg` are the two arms aimed
+at that, and they are the project's own contribution rather than ports:
+
+- **`at_conf`** runs the over-confidence attack as its *inner maximisation* —
+  freeze the model's own prediction, then inflate confidence in it — and asks
+  the outer cross-entropy to be right on those inputs anyway. Where the model
+  would have been confidently wrong, the two disagree and the gradient is large.
+- **`conf_reg`** adds `λ·mean(max_k p_k · 1[wrong])`: a direct penalty on
+  confident mistakes, with no inner attack, so it costs one forward per step.
+  It optimises the confidence *ranking* the moderation layer reads, which no
+  accuracy-based objective can express.
+
+Both are **non-adaptive** results unless an attacker is subsequently optimised
+against them, and must be reported that way — a defence evaluated only against
+the attack it was trained on is the standard way robustness claims dissolve
+(Athalye et al. 2018). A negative result is still a result here: the question
+of whether confidence adversarial training survives an adaptive attack is open.
+
+**AWP** (Adversarial Weight Perturbation, Wu et al. 2020) is a *modifier*, not
+an arm: `awp_gamma > 0` composes it with every pipe except `standard`,
+including EV-AT, where the weight adversary attacks `L_EV + β·L_REA` rather
+than a cross-entropy proxy. Report it as an ablation on top of an arm, never
+as an arm. Ordering is the subtle part — the gradient is taken at `w + v` and
+applied to `w` — and `tests/pipes/test_awp.py` pins it, because getting it
+wrong yields a run that trains fine with no AWP in it.
+
+**Model selection.** Selecting a defence arm on clean macro-F1 selects it on
+exactly what it deliberately trades away. Set `robust_val_steps > 0` to also
+compute `val_robust_accuracy` (one PGD run per validation batch) and
+`selection_metric: val_robust_accuracy` so the checkpoint and early-stopping
+callbacks use it. Off by default because it is not free.
 
 **EV-AT** (arXiv:2607.03075) is the evidential method the harness benchmarks
 against the MSP and temperature-scaling baselines. The backbone becomes an
@@ -299,8 +394,12 @@ src/trustfake/
     torch/             Plain PyTorch model architectures (e.g. ResNet)
     wrapper/            Wraps a model with normalization, loss and uncertainty score
   attacks/             Adversarial attacks (e.g. FGSM) used during evaluation
-  metrics/             Classification, failure-detection and uncertainty metrics
+  corruptions/         Common-corruption evaluation conditions (jpeg, webp, ...)
+  losses/              Evidential loss and the log-Dirichlet discrepancy
+  metrics/             Classification, failure-detection, calibration,
+                        selective-classification and WP4 moderation metrics
   pipes/               Lightning modules driving training and evaluation
+    train/             One module per defence arm, plus the AWP modifier
   pydantic/            Schemas validating model outputs
   instantiator.py      Builds all components from a Hydra config
   logging.py           Project-wide loguru setup

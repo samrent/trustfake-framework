@@ -1,0 +1,14 @@
+attack:
+  _target_: trustfake.attacks.ACE
+  # ACE under the REALISABLE threat model: candidate steps snap to the 1/255
+  # pixel grid, which is what saving a file does. This matters more than it
+  # looks -- at small eps the mean perturbation can sit below one 8-bit
+  # quantisation step, so unquantised ACE describes an attacker with
+  # post-decode tensor access, while this describes one who can only upload
+  # a file. The grid snap can exceed eps by up to half a grey level when eps
+  # is not grid-aligned.
+  eps: 0.005
+  clip_min: 0.0
+  clip_max: 1.0
+  iters: 15
+  quantize: true

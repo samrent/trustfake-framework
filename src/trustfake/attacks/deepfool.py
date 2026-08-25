@@ -29,6 +29,9 @@ class DeepFool(AdversarialAttack):
         clip_min, clip_max (float): Valid input range.
     """
 
+    norm = "l2"
+    minimum_norm = True
+
     def __init__(
         self,
         eps: float = 0.5,
@@ -105,7 +108,7 @@ class DeepFool(AdversarialAttack):
 
         x_adv = self._clamp(project_l2(x_adv.detach(), inputs, self.eps))
         with torch.no_grad():
-            final_logits = model_logits(model, x_adv)
+            final_logits, _, final_preds, _ = model(x_adv)
 
         model.train(was_training)
         return AttackResult(
@@ -113,6 +116,10 @@ class DeepFool(AdversarialAttack):
             effective_eps=(x_adv - inputs).abs().flatten(1).amax(dim=1).detach(),
             clean_preds=preds,
             accepted_logits=final_logits.detach(),
+            l2_norm=(x_adv - inputs).flatten(1).norm(dim=1).detach(),
+            # Measured after the eps cap: a flip that only survives outside
+            # the reported budget is not a success inside it.
+            success=(final_preds.detach() != preds),
         )
 
     def __call__(

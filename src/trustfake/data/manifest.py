@@ -30,6 +30,13 @@ Naming discipline: the official SID-Set test split is withheld by the authors
 from the VALIDATION split; `SPLIT_PROVENANCE` is what reports must print.
 Never write "SID-Set test set".
 
+Beside the shard-level assignment this module carries one ROW-level
+protocol control, `geometry_selection`: SID-Set's squares-are-fake artifact
+is a property of which rows exist, so the only place it can be removed is
+in the choice of rows. It is deliberately separate from the split
+assignment -- it changes what a number means, not which images are allowed
+to produce it.
+
 The row key, where one is needed, is ``uid = "<source_split>:<img_id>"``.
 `img_id` alone is NOT unique across source splits -- the synthetic and
 tampered classes are numbered sequentially and the counter restarts per split,
@@ -52,9 +59,11 @@ __all__ = [
     "PROFILES",
     "DEFAULT_MANIFEST_SEED",
     "SPLIT_PROVENANCE",
+    "GEOMETRY_FILTERS",
     "assign_shards",
     "discover_shards",
     "build_manifest",
+    "geometry_selection",
 ]
 
 SPLIT_PROVENANCE = (
@@ -80,6 +89,9 @@ PROFILES: dict[str, dict[str, int]] = {
     # train shards are the only genuinely-unseen pool.
     "train_holdout": {"fit": 30, "calib": 8, "test": 26, "holdout": 6},
 }
+
+# Row-level geometry controls. See `geometry_selection`.
+GEOMETRY_FILTERS: tuple[str, ...] = ("none", "square", "nonsquare", "matched")
 
 
 def assign_shards(
@@ -201,3 +213,129 @@ def build_manifest(
         logger.debug(f"manifest[{role}]: {len(paths)} shards")
     logger.info(f"Split provenance: {SPLIT_PROVENANCE}")
     return manifest
+
+
+def _matched_selection(square: np.ndarray, labels: np.ndarray, seed: int) -> np.ndarray:
+    """Equal-count cells: the same number of square and of non-square rows
+    for every label. See `geometry_selection` for the protocol argument."""
+    rng = np.random.default_rng(seed)
+    classes = sorted({int(v) for v in labels.tolist()})
+    cells = {
+        (label, is_square): np.flatnonzero((labels == label) & (square == is_square))
+        for label in classes
+        for is_square in (True, False)
+    }
+    # The rarest cell of each geometry sets the quota for every label; that
+    # is what makes the rate identical across labels rather than merely
+    # closer.
+    quota = {
+        is_square: min(cells[(label, is_square)].size for label in classes)
+        for is_square in (True, False)
+    }
+
+    chosen: list[np.ndarray] = []
+    for label in classes:
+        for is_square in (True, False):
+            keep = quota[is_square]
+            if keep == 0:
+                continue
+            pool = cells[(label, is_square)]
+            chosen.append(
+                pool
+                if pool.size == keep
+                else np.sort(rng.choice(pool, size=keep, replace=False))
+            )
+    if not chosen:
+        return np.empty(0, dtype=np.int64)
+    return np.sort(np.concatenate(chosen))
+
+
+def geometry_selection(
+    widths: np.ndarray,
+    heights: np.ndarray,
+    labels: np.ndarray,
+    mode: str = "none",
+    seed: int = DEFAULT_MANIFEST_SEED,
+) -> list[int]:
+    """Row indices of a geometry-controlled subset.
+
+    SID-Set's fully-synthetic and tampered classes are essentially always
+    square while most real images are not, so ``width == height -> fake``
+    scores above a CLIP probe on the raw split (see
+    `trustfake.data.baselines`). The framework resizes everything to a
+    square before the model sees it, so the model cannot read geometry
+    directly -- but the artifact still decides *which images are which
+    class*, so a model can ride whatever else co-varies with it. The honest
+    answer is a protocol change: report on a subset in which geometry
+    carries no label information. This is that subset, at row level.
+
+    Modes:
+        none: every row. The default -- the uncontrolled protocol.
+        square: only ``width == height`` rows. The rule is then constant,
+            so it carries zero information by construction.
+        nonsquare: only ``width != height`` rows. Constant too, and the
+            complementary check: on SID-Set it strips almost every fake,
+            which is itself worth seeing in the row count.
+        matched: equal counts in every (label x geometry) cell, so the
+            square rate is identical across labels -- geometry and label
+            are independent by construction, and so is the class prior.
+
+    `matched` is the mode with a cost worth stating in a report. The quota
+    is set by the rarest cell, so n collapses to ``num_labels *
+    (min_square + min_nonsquare)``; on SID-Set, where a fake class has *no*
+    non-square rows at all, the non-square quota is zero and the mode
+    degenerates to a class-balanced, square-only subset. That degeneracy is
+    not a bug in the sampler, it is the dataset's artifact stated in the
+    only terms that remove it. It also means the reported class prior is
+    uniform rather than the dataset's, so the majority-class floor moves --
+    say so next to any accuracy computed here.
+
+    Selection inside an over-full cell is a seeded draw from `seed`, the
+    MANIFEST seed, never the experiment seed: the reported subset must not
+    move when the training seed does.
+
+    Args:
+        widths: Original (pre-resize) width per row.
+        heights: Original (pre-resize) height per row.
+        labels: Class label per row.
+        mode: One of `GEOMETRY_FILTERS`.
+        seed: Manifest seed for the within-cell draw.
+
+    Returns:
+        Ascending row indices to keep.
+    """
+    if mode not in GEOMETRY_FILTERS:
+        msg = f"Unknown geometry_filter '{mode}'. Available: {list(GEOMETRY_FILTERS)}"
+        logger.error(msg)
+        raise ValueError(msg)
+
+    widths = np.asarray(widths)
+    heights = np.asarray(heights)
+    labels = np.asarray(labels)
+    if not widths.shape == heights.shape == labels.shape:
+        msg = (
+            "widths, heights and labels must be parallel: got "
+            f"{widths.shape}, {heights.shape}, {labels.shape}."
+        )
+        logger.error(msg)
+        raise ValueError(msg)
+
+    if mode == "none":
+        return list(range(int(widths.size)))
+
+    square = widths == heights
+    if mode == "square":
+        keep = np.flatnonzero(square)
+    elif mode == "nonsquare":
+        keep = np.flatnonzero(~square)
+    else:
+        keep = _matched_selection(square, labels, seed)
+
+    if keep.size == 0:
+        msg = (
+            f"geometry_filter '{mode}' selected 0 of {widths.size} rows -- "
+            "there is no controlled subset to report on."
+        )
+        logger.error(msg)
+        raise ValueError(msg)
+    return [int(index) for index in keep]

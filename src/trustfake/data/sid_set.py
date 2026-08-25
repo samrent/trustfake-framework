@@ -5,6 +5,17 @@ fit comes from train shards, calib and test from disjoint validation shards,
 and the model-selection slice (what Lightning sees as `val`) is carved from
 fit at row level. See the manifest module docstring for why this is structural
 rather than disciplinary.
+
+The datamodule also carries the two GEOMETRY CONTROLS, because both have to
+act before the model sees anything (see `trustfake.data.baselines` for the
+artifact they answer):
+
+  * `geometry_filter` -- a row filter on the reported splits, so the
+    ``width == height`` rule carries no signal in the subset that is scored.
+  * `squarecrop` -- a centre crop to the short side, applied BEFORE the
+    resize. Order is the whole substance of it: after the resize every image
+    is already square, so a crop there is a no-op and the "control" would
+    silently do nothing.
 """
 
 from __future__ import annotations
@@ -18,21 +29,33 @@ import numpy as np
 import torch
 import torch.nn as nn
 from datasets import Dataset, load_dataset
+from datasets import Image as HFImage
 from PIL import Image
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
 from torchvision import transforms
 
+from trustfake.data.baselines import image_dims_and_format
 from trustfake.data.manifest import (
     DEFAULT_MANIFEST_SEED,
+    GEOMETRY_FILTERS,
     SPLIT_PROVENANCE,
     build_manifest,
+    geometry_selection,
 )
 from trustfake.logging import get_logger
 
 logger = get_logger("sid-set")
 
-__all__ = ["SIDSetDataModule"]
+__all__ = ["SIDSetDataModule", "CentreSquareCrop"]
+
+#: Roles the row-level geometry filter applies to. calib is in the list with
+#: test on purpose: it fits the temperature and the moderation thresholds,
+#: so it must come from the same distribution as the split those thresholds
+#: are reported on. fit is NOT -- the control asks "does this model still
+#: work when geometry carries no signal?", which is a question about a model
+#: trained on the real distribution.
+GEOMETRY_FILTERED_ROLES: tuple[str, ...] = ("calib", "test", "holdout")
 
 
 def _find_column(columns: list[str], candidates: tuple[str, ...], kind: str) -> str:
@@ -40,6 +63,66 @@ def _find_column(columns: list[str], candidates: tuple[str, ...], kind: str) -> 
         if candidate in columns:
             return candidate
     raise ValueError(f"Could not find a {kind} column in: {columns}")
+
+
+class CentreSquareCrop:
+    """Crop a PIL image to a centred square of its short side.
+
+    THE PIXEL-LEVEL GEOMETRY CONTROL, and it only works in one position: in
+    front of the resize. SID-Set's fake classes are essentially always
+    square and most reals are not, so ``width == height -> fake`` scores
+    above a CLIP probe on the raw split. Cropping every image to a square
+    makes geometry carry zero label information by construction, so a model
+    evaluated under this condition cannot be riding that artifact. Placed
+    after `transforms.Resize`, it would crop an already-square 224x224
+    tensor and change nothing at all.
+
+    Two honest caveats. Fit AND evaluate under the same condition, or the
+    control is just a covariate shift wearing a control's name. And the crop
+    preserves the short side, so it does not touch the ``short side ==
+    1024`` residue (see `trustfake.data.baselines`).
+
+    A class rather than a `transforms.Lambda` so it pickles into dataloader
+    workers and prints itself in a transform repr.
+    """
+
+    def __call__(self, image: Image.Image) -> Image.Image:
+        width, height = image.size
+        side = min(width, height)
+        left = (width - side) // 2
+        top = (height - side) // 2
+        return image.crop((left, top, left + side, top + side))
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}()"
+
+
+def _original_dims(
+    hf_dataset: Dataset, image_column: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Original (pre-resize) width and height of every row.
+
+    Reuses `trustfake.data.baselines.image_dims_and_format`, which is also
+    what computes the trivial baselines -- one reader, so the filter and the
+    number it is answering can never disagree about what "square" means.
+
+    The image column is cast to ``decode=False`` first when it is an HF
+    Image feature: that hands back the raw ``{bytes, path}`` struct so only
+    the file header is parsed. Decoding megapixels to measure them would
+    make the filter cost more than the evaluation it enables.
+    """
+    dataset = hf_dataset
+    features = getattr(dataset, "features", None) or {}
+    if isinstance(features.get(image_column), HFImage):
+        dataset = dataset.cast_column(image_column, HFImage(decode=False))
+
+    widths = np.empty(len(dataset), dtype=np.int64)
+    heights = np.empty(len(dataset), dtype=np.int64)
+    for index in range(len(dataset)):
+        width, height, _ = image_dims_and_format(dataset[index][image_column])
+        widths[index] = width
+        heights[index] = height
+    return widths, heights
 
 
 class SIDSetTorchDataset(TorchDataset[tuple[torch.Tensor, torch.Tensor]]):
@@ -97,6 +180,18 @@ class SIDSetDataModule(L.LightningDataModule):
         val_fraction: Fraction of fit carved out (at row level) as the
             model-selection slice served by `val_dataloader`.
         seed: Experiment seed; governs the row-level fit/val carve only.
+        geometry_filter: Row-level geometry control, one of
+            `trustfake.data.manifest.GEOMETRY_FILTERS`: none (default,
+            unchanged) | square | nonsquare | matched. Applied to
+            `GEOMETRY_FILTERED_ROLES` only, and seeded by `manifest_seed`,
+            so the controlled subset is a property of the protocol and not
+            of the training run. Anything but 'none' changes what a reported
+            number means -- and 'matched' changes the class prior too, so
+            the majority-class floor moves with it. Say so in the report.
+        squarecrop: Centre-crop every image to its short side BEFORE the
+            resize (`CentreSquareCrop`). The pixel-level geometry control.
+            Use it for fit and evaluation together or it is a covariate
+            shift, not a control.
     """
 
     IMAGE_COLUMN_CANDIDATES = ("image", "img", "pixel_values")
@@ -115,6 +210,8 @@ class SIDSetDataModule(L.LightningDataModule):
         seed: int = 42,
         pin_memory: bool = True,
         normalization_layer: nn.Module | None = None,
+        geometry_filter: str = "none",
+        squarecrop: bool = False,
     ) -> None:
         super().__init__()
         self.data_dir = str(data_dir)
@@ -129,6 +226,15 @@ class SIDSetDataModule(L.LightningDataModule):
         self.normalization_layer = (
             normalization_layer if normalization_layer is not None else nn.Identity()
         )
+        if geometry_filter not in GEOMETRY_FILTERS:
+            msg = (
+                f"Unknown geometry_filter '{geometry_filter}'. Available: "
+                f"{list(GEOMETRY_FILTERS)}"
+            )
+            logger.error(msg)
+            raise ValueError(msg)
+        self.geometry_filter = geometry_filter
+        self.squarecrop = bool(squarecrop)
 
         self.num_classes: int = 3
         self.split_provenance: str = SPLIT_PROVENANCE
@@ -141,8 +247,11 @@ class SIDSetDataModule(L.LightningDataModule):
         self._test_ds: SIDSetTorchDataset | None = None
         self._holdout_ds: SIDSetTorchDataset | None = None
 
+        # The crop goes first or it does nothing: Resize makes every image
+        # square, so a crop behind it is a no-op on an already-square tensor.
         self.transform = transforms.Compose(
             [
+                *([CentreSquareCrop()] if self.squarecrop else []),
                 transforms.Resize((self.image_size, self.image_size)),
                 transforms.ToTensor(),
             ]
@@ -165,6 +274,40 @@ class SIDSetDataModule(L.LightningDataModule):
             )
             logger.error(msg)
             raise ValueError(msg)
+
+    def _apply_geometry_filter(self, hf_dataset: Dataset, role: str) -> Dataset:
+        """Select the geometry-controlled rows of one role and log what the
+        control cost and what it bought.
+
+        The square rate per label is logged after filtering because it is
+        the number that proves the control did its job: equal rates across
+        labels means ``width == height`` carries no label information, which
+        is the entire claim a controlled row makes.
+        """
+        widths, heights = _original_dims(hf_dataset, self.image_column)
+        labels = np.asarray(hf_dataset[self.label_column], dtype=np.int64)
+        keep = geometry_selection(
+            widths, heights, labels, self.geometry_filter, self.manifest_seed
+        )
+
+        square = (widths == heights)[keep]
+        kept_labels = labels[keep]
+        rates = {
+            int(label): round(float(square[kept_labels == label].mean()), 4)
+            for label in sorted(set(kept_labels.tolist()))
+        }
+        logger.info(
+            f"geometry_filter '{self.geometry_filter}' on '{role}': "
+            f"{len(keep)}/{len(hf_dataset)} rows kept; square rate by label "
+            f"{rates}. Report this protocol beside any number from it."
+        )
+        if len(set(rates.values())) > 1:
+            logger.warning(
+                f"geometry_filter '{self.geometry_filter}' left unequal square "
+                f"rates across labels on '{role}' ({rates}) -- geometry still "
+                "carries label information in this subset."
+            )
+        return hf_dataset.select(keep)
 
     def setup(self, stage: str | None = None) -> None:
         if self._train_ds is not None:
@@ -189,6 +332,13 @@ class SIDSetDataModule(L.LightningDataModule):
         id_column = next((c for c in self.ID_COLUMN_CANDIDATES if c in columns), None)
         if id_column is not None:
             self._check_ids(dataset, id_column)
+
+        # The geometry control runs after the uid tripwire, so the tripwire
+        # still sees every row it is meant to police.
+        if self.geometry_filter != "none":
+            for role in GEOMETRY_FILTERED_ROLES:
+                if role in dataset:
+                    dataset[role] = self._apply_geometry_filter(dataset[role], role)
 
         # Model selection sees a row-level slice of fit; calib and test never.
         fit_split = dataset["fit"].train_test_split(
@@ -222,6 +372,11 @@ class SIDSetDataModule(L.LightningDataModule):
             )
         )
         logger.info(f"Split provenance: {self.split_provenance}")
+        logger.info(
+            "Geometry protocol -- "
+            f"filter: {self.geometry_filter} (roles "
+            f"{list(GEOMETRY_FILTERED_ROLES)}), squarecrop: {self.squarecrop}"
+        )
 
     def _loader(
         self, dataset: SIDSetTorchDataset, shuffle: bool

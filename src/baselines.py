@@ -2,6 +2,7 @@
 
 python src/baselines.py            # test split, 'full' profile
 python src/baselines.py --role calib --profile smoke
+python src/baselines.py --condition squarecrop   # geometry-controlled wording
 """
 
 import argparse
@@ -20,6 +21,16 @@ def main() -> None:
     ap.add_argument("--profile", default="full")
     ap.add_argument("--role", default="test")
     ap.add_argument("--real-class", type=int, default=0)
+    ap.add_argument(
+        "--condition",
+        default=None,
+        help=(
+            "evaluation protocol these baselines will be printed beside "
+            "(e.g. 'squarecrop', or a geometry_filter mode). Under a geometry "
+            "control the raw 'width==height' accuracy misstates the protocol, "
+            "so the headline says so instead of printing it bare."
+        ),
+    )
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
@@ -28,7 +39,7 @@ def main() -> None:
         data_dir, profile=a.profile, split_role=a.role, real_class=a.real_class
     )
     print(json.dumps(baselines, indent=2))
-    print("\n" + headline(baselines))
+    print("\n" + headline(baselines, condition=a.condition))
     if a.out:
         with open(a.out, "w") as f:
             f.write(json.dumps(baselines, indent=2) + "\n")

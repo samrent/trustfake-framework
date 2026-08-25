@@ -29,14 +29,44 @@ num_samples: 20  # number of stochastic forward passes, used when wrapper: mc_dr
 # loss: evidential, uncertainty_score: evidential_predictive_entropy).
 beta: 1.0        # weight of the robust evidence-alignment loss L_REA
 rea_mode: ikl    # discrepancy for the adversary and L_REA: ikl | kl | l2
+ikl_ema: 0.9     # EMA rate of the IKL class-wise global weight (a running
+                 # mean of the per-class predictive means). On a short run
+                 # that buffer never converges, so this is a live knob, not a
+                 # constant: a high rate leaves the weight partly at its
+                 # uniform initialisation.
 adv_eps: 0.03137 # L_inf budget of the adversary (8/255); shared by EV-AT and AT
 adv_steps: 10    # PGD steps of the adversary
 
-# Adversarial-training baselines (experiment.training_pipe: pgd_at | trades).
-# Report at forensic epsilons: an 8/255 ball can erase deepfake evidence and
-# collapse training, so warm up eps or lower it (e.g. adv_eps: 0.00784 = 2/255).
+# Adversarial-training arms (experiment.training_pipe: pgd_at | trades |
+# at_kl | mart | at_conf). Report at forensic epsilons: an 8/255 ball can
+# erase deepfake evidence and collapse training onto a constant output, so
+# warm up eps or lower it (e.g. adv_eps: 0.00784 = 2/255).
 adv_warmup_epochs: 0  # ramp eps over the first N epochs (0 = off)
-trades_beta: 6.0      # TRADES robustness weight
+# beta weights a different term in each arm, so each gets its own key: one
+# shared value would make three incomparable settings look like one.
+trades_beta: 6.0      # TRADES: KL against natural CE
+at_kl_beta: 6.0       # AT+KL: consistency KL against ADVERSARIAL CE
+mart_beta: 6.0        # MART: misclassification-weighted KL
+
+# Confidence-axis defence (experiment.training_pipe: conf_reg). Weight of the
+# penalty on confident mistakes. 0 reduces the arm to standard training, which
+# is the control it has to be read against.
+lambda_reg: 1.0
+
+# Adversarial Weight Perturbation (Wu et al. 2020). A modifier, not a method:
+# it composes with every arm except `standard`, and is reported as an ablation
+# ON TOP of an arm rather than as an arm of its own. 0 disables it;
+# 0.005-0.01 is the usual range.
+awp_gamma: 0.0
+awp_warmup_epochs: 0
+
+# Robust model selection. Selecting a defence arm on clean macro-F1 selects it
+# on exactly what it deliberately trades away, so the checkpoint kept is the
+# least robust epoch that happened to fit the clean split best. Set this > 0
+# to also compute `val_robust_accuracy` (one PGD run per validation batch),
+# then set selection_metric: val_robust_accuracy so the callbacks use it.
+robust_val_steps: 0
+selection_metric: val_f1_score
 
 step: fit
 output_dir: ${oc.env:OUTPUT_PATH}/${experiment.name}/${model.name}/s${experiment.seed}

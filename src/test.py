@@ -7,7 +7,11 @@ import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 
-from trustfake.instantiator import config_parsing, save_experiment_config
+from trustfake.instantiator import (
+    config_parsing,
+    save_experiment_config,
+    select_evaluation_condition,
+)
 from trustfake.logging import add_handler, get_logger
 from trustfake.metrics.calibration import calibrate_temperature
 from trustfake.metrics.moderation import (
@@ -98,6 +102,12 @@ def run_eval_pipe(cfg: DictConfig):
         logger.error(msg)
         raise ValueError(msg)
 
+    # The single evaluation condition reported beside clean: an attack
+    # (+attack=...) or a corruption (+corruption=...), never both.
+    condition = select_evaluation_condition(cfg)
+    if condition is not None:
+        logger.info(f"Evaluation condition: {condition.name} ({condition.family})")
+
     wrapper_kwargs = {}
     if wrapper_cls is MCDropoutWrapper:
         wrapper_kwargs["num_samples"] = cfg.get("num_samples", 20)
@@ -120,7 +130,7 @@ def run_eval_pipe(cfg: DictConfig):
             model=module_best,
             model_output_schema_cls=ClassificationModelOutput,
             num_classes=datamodule.num_classes,
-            attack=cfg["attack"],
+            attack=condition,
         )
     except Exception as e:
         logger.exception(f"Error loading model from checkpoint {best_model_path}: {e}")
@@ -171,8 +181,16 @@ def run_eval_pipe(cfg: DictConfig):
             real_class = cfg.get("real_class", 0)
             p_fake = 1.0 - probs[:, real_class]
             y_binary = (targets != real_class).astype(int)
+            # sla_missed_fake is the second, asymmetric SLA: residual risk
+            # counts both error directions, so a policy can meet it while
+            # auto-allowing a large share of the fakes. Left null when the
+            # deployment has no missed-fake commitment to state.
+            sla_missed_fake = cfg.get("moderation_sla_missed_fake", None)
             t_low, t_high = fit_thresholds(
-                p_fake, y_binary, sla_residual_risk=cfg.get("moderation_sla", 0.05)
+                p_fake,
+                y_binary,
+                sla_residual_risk=cfg.get("moderation_sla", 0.05),
+                sla_missed_fake=sla_missed_fake,
             )
             t_unc = fit_uncertainty_gate(
                 uncertainty,
@@ -181,10 +199,14 @@ def run_eval_pipe(cfg: DictConfig):
             eval_module.moderation_policy = ModerationPolicy(
                 t_low=t_low, t_high=t_high, real_class=real_class, t_unc=t_unc
             )
+            missed_fake_note = (
+                "not set" if sla_missed_fake is None else f"<= {sla_missed_fake:.0%}"
+            )
             logger.info(
                 f"Moderation policy fitted on clean calib: t_low={t_low:.4f}, "
                 f"t_high={t_high:.4f}, t_unc={t_unc:.4f}, "
-                f"SLA residual risk <= {cfg.get('moderation_sla', 0.05):.0%}"
+                f"SLA residual risk <= {cfg.get('moderation_sla', 0.05):.0%}, "
+                f"SLA missed fake {missed_fake_note}"
             )
             if eval_module.moderation_policy.infeasible:
                 logger.warning(

@@ -17,6 +17,15 @@ experiment:
 wrapper: base  # base | mc_dropout
 num_samples: 20  # number of stochastic forward passes, used when wrapper: mc_dropout
 
+# Evaluation condition, reported beside clean. Add exactly ONE of:
+#   +attack=fgsm|pgd|autoattack|ace|param_ace|evidence_pgd|...
+#   +corruption=jpeg|webp|downscale|gaussian_noise|gaussian_blur
+# They are mutually exclusive -- both set is an error, not a merge. An
+# attack is a worst-case, eps-bounded perturbation; a corruption is a
+# distributional-shift condition with no budget at all, so the two are
+# separate columns of the benchmark and must never be averaged. One run per
+# condition: the condition's name keys its metrics and its log directory.
+
 # Temperature scaling: fit a single T on the calib split (NLL-minimising) and
 # freeze it before scoring, as a calibration baseline. Reported ECE/NLL/Brier
 # reflect the fitted T. Set false to report the raw model (T = 1.0).
@@ -29,6 +38,12 @@ calibrate: true
 # fraction of clean items. real_class is SID-Set label 0 (real).
 moderate: true
 moderation_sla: 0.05
+# Optional second, asymmetric SLA: cap the share of fakes the policy
+# auto-ALLOWS. Residual risk counts both error directions, so a policy can
+# satisfy moderation_sla while quietly letting most fakes through -- for a
+# deepfake queue that is the error that matters. null = no missed-fake
+# commitment (the thresholds are then chosen on residual risk alone).
+moderation_sla_missed_fake: null
 moderation_review_budget: 0.10
 real_class: 0
 
