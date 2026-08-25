@@ -1,0 +1,2 @@
+uncertainty_score:
+  _target_: trustfake.metrics.uncertainty.mc_dropout.MCDropoutPredictiveEntropy

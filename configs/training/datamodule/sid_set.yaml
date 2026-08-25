@@ -1,0 +1,18 @@
+datamodule:
+  _target_: trustfake.data.SIDSetDataModule
+  _partial_: true
+  dataset_name: saberzl/SID_Set
+  cache_dir: ${oc.env:DATA_PATH}
+  batch_size: ${dataloaders.batch_size}
+  num_workers: ${dataloaders.num_workers}
+  image_size: 224
+  seed: ${experiment.seed}
+  pin_memory: true
+  # Optional normalization layer applied to inputs before the model forward
+  # pass. Defaults to no-op (nn.Identity) when left null. Uncomment to enable
+  # ImageNet normalization, for example:
+  normalization_layer:
+    _target_: torchvision.transforms.Normalize
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+  # normalization_layer: null

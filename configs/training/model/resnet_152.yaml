@@ -1,0 +1,6 @@
+name: resnet152
+model:
+  _target_: trustfake.models.torch.resnet152
+  pretrained: true
+  num_classes: 3
+  dropout_p: 0.2

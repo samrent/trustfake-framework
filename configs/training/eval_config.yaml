@@ -1,0 +1,30 @@
+defaults:
+  - datamodule: sid_set
+  - model: resnet18
+  - loss: ce
+  - trainer: standard
+  - uncertainty_score: multiclass_max_probability
+  - _self_
+
+dataloaders:
+    batch_size: 16
+    num_workers: 8
+
+experiment:
+  name: ???
+  seed: 1
+
+wrapper: base  # base | mc_dropout
+num_samples: 20  # number of stochastic forward passes, used when wrapper: mc_dropout
+
+step: test
+output_dir: ${oc.env:OUTPUT_PATH}/${experiment.name}/${model.name}/s${experiment.seed}
+
+hydra:
+  run:
+    dir: ${oc.env:LOGS_PATH}/${experiment.name}/${model.name}/s${experiment.seed}/${step}/${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ${oc.env:LOGS_PATH}/${experiment.name}/${model.name}/s${experiment.seed}/${step}/${now:%Y-%m-%d_%H-%M-%S}
+    subdir: ${hydra.job.num}
+  verbose: false
+

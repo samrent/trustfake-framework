@@ -1,0 +1,7 @@
+{
+  "name": "trustfake-dev",
+  "dockerComposeFile": "../docker-compose.yaml",
+  "service": "trustfake-dev",
+  "workspaceFolder": "/home/workspace",
+  "remoteUser": "${localEnv:USER}"
+}

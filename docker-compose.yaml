@@ -1,0 +1,37 @@
+name: ${USER}_trustfake
+services:
+  trustfake-dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        - USER_ID=${USER_ID}
+        - GROUP_ID=${GROUP_ID}
+        - USER=${USER}
+    image: trustfake-dev
+    shm_size: '2gb'
+    env_file:
+      - .env
+    environment:
+      - USER=${USER}
+      - USER_ID=${USER_ID}
+      - GROUP_ID=${GROUP_ID}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - UV_PYTHON=/opt/conda/bin/python
+      - UV_INSTALL_DIR=/usr/bin
+    volumes:
+      - ./:/home/workspace
+      - ./docker/entrypoint.sh:/home/entrypoint.sh
+    ports:
+      - "8800:8800"
+    working_dir: /home/workspace
+    entrypoint: ["/home/entrypoint.sh"]
+    command: [sleep, infinity]
+    container_name: ${USER}_trustfake_dev
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]

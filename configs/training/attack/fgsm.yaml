@@ -1,0 +1,5 @@
+attack:
+  _target_: trustfake.attacks.FGSM
+  eps: 0.03137
+  clip_min: 0.0
+  clip_max: 1.0

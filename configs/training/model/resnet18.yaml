@@ -1,0 +1,6 @@
+name: resnet18
+model:
+  _target_: trustfake.models.torch.resnet18
+  pretrained: true
+  num_classes: 3
+  dropout_p: 0.2

@@ -1,0 +1,5 @@
+scheduler:
+  _target_: torch.optim.lr_scheduler.MultiStepLR
+  _partial_: true
+  milestones: [75, 85, 95]
+  gamma: 0.1
