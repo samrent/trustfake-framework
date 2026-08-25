@@ -91,7 +91,7 @@ PROFILES: dict[str, dict[str, int]] = {
     # the winner is re-run at "train" for anything quotable. Keeping the
     # sweep on its own slice is also what stops a 20-config search from
     # quietly becoming 20 attempts at the reported test split.
-    "sweep": {"fit": 4, "calib": 2, "test": 4},
+    "sweep": {"fit": 12, "calib": 2, "test": 4},
     # As "train", plus a sealed holdout drawn from train shards disjoint from
     # fit. All 34 validation shards are consumed by calib+test, so unused
     # train shards are the only genuinely-unseen pool.
