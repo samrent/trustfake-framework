@@ -14,6 +14,8 @@ __all__ = [
     "project_l2",
     "project_l1_ball",
     "class_margin",
+    "l2_witness_search",
+    "shrink_towards",
     "finalise_minimum_norm",
 ]
 
@@ -119,12 +121,127 @@ def project_l1_ball(
     return torch.where(outside[:, None], projected, flat).view_as(v)
 
 
+def l2_witness_search(
+    model: TrustFakeWrapper,
+    inputs: torch.Tensor,
+    preds: torch.Tensor,
+    eps: float,
+    steps: int = 50,
+    clip_min: float = 0.0,
+    clip_max: float = 1.0,
+    seed: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Is ANY adversarial example reachable inside ``||delta||_2 <= eps``?
+
+    A fixed-budget attack that flips a sample inside a radius is a *witness*
+    that the true minimum norm is at most that radius. So a minimum-norm
+    attack capped at the same radius that reports failure on that sample is
+    not measuring the model -- it is reporting its own search having stalled,
+    as robustness the model does not have. That is the one direction an
+    attack is never allowed to be wrong in, because it is invisible: a
+    stalled search and a genuinely robust sample produce the same row.
+
+    This closes it by construction. Whatever the norm-minimising walk left
+    behind, every sample it failed on gets one more chance from a plain
+    projected descent on the class margin inside the ball -- so the attack
+    is at least as strong as a fixed-budget attack at its own cap, by
+    definition rather than by luck. Two restarts (the clean point and a
+    random point in the ball), because a curved boundary can leave a single
+    descent short of a flip that a different start finds immediately.
+
+    Returns:
+        ``(perturbed, found)`` -- the first adversarial iterate located for
+        each sample, and a mask of which samples were solved. Unsolved
+        samples come back clean.
+    """
+    found = torch.zeros(preds.shape[0], dtype=torch.bool, device=inputs.device)
+    best = inputs.clone()
+    if eps <= 0 or steps <= 0:
+        return best, found
+
+    expand = (-1,) + (1,) * (inputs.ndim - 1)
+    alpha = 2.5 * eps / steps
+    generator = torch.Generator(device=inputs.device).manual_seed(seed)
+
+    for restart in range(2):
+        if restart == 0:
+            x = inputs.clone()
+        else:
+            noise = torch.empty_like(inputs).normal_(0.0, 1.0, generator=generator)
+            flat = noise.flatten(1)
+            direction = flat / flat.norm(dim=1, keepdim=True).clamp_min(1e-12)
+            radius = (
+                torch.rand(
+                    inputs.shape[0], 1, device=inputs.device, generator=generator
+                )
+                * eps
+            )
+            start = inputs + (direction * radius).view_as(inputs)
+            x = start.clamp(clip_min, clip_max)
+
+        for _ in range(steps):
+            x = x.clone().detach().requires_grad_(True)
+            with torch.enable_grad():
+                margin = class_margin(model_logits(model, x), preds)
+                grad = torch.autograd.grad(margin.sum(), x)[0]
+            # DESCEND the margin -- drive it below zero -- along the unit L2
+            # direction, so the step is a distance in input space.
+            flat_grad = grad.flatten(1)
+            unit = flat_grad / flat_grad.norm(dim=1, keepdim=True).clamp_min(1e-12)
+            x = x.detach() - alpha * unit.view_as(grad)
+            x = project_l2(x, inputs, eps).clamp(clip_min, clip_max)
+
+            with torch.no_grad():
+                flipped = model(x)[2].detach() != preds
+            take = flipped & ~found
+            best = torch.where(take.view(expand), x, best)
+            found = found | flipped
+            if bool(found.all()):
+                return best.detach(), found
+
+    return best.detach(), found
+
+
+def shrink_towards(
+    model: TrustFakeWrapper,
+    inputs: torch.Tensor,
+    x_adv: torch.Tensor,
+    preds: torch.Tensor,
+    steps: int = 12,
+) -> torch.Tensor:
+    """Bisect along ``[inputs, x_adv]`` for the smallest still-adversarial point.
+
+    A witness search answers "is the cap reachable", not "how little does it
+    take" -- left alone it would report a norm at the cap, which is a worse
+    minimum-norm estimate than the attack could give. Bisection costs a
+    handful of forwards and recovers most of the difference. `hi` is kept
+    adversarial throughout, so the returned point always is.
+    """
+    expand = (-1,) + (1,) * (inputs.ndim - 1)
+    lo = torch.zeros(preds.shape[0], device=inputs.device, dtype=inputs.dtype)
+    hi = torch.ones_like(lo)
+    for _ in range(steps):
+        mid = (lo + hi) / 2
+        probe = inputs + mid.view(expand) * (x_adv - inputs)
+        with torch.no_grad():
+            adversarial = model(probe)[2].detach() != preds
+        hi = torch.where(adversarial, mid, hi)
+        lo = torch.where(adversarial, lo, mid)
+    return (inputs + hi.view(expand) * (x_adv - inputs)).detach()
+
+
 def finalise_minimum_norm(
     model: TrustFakeWrapper,
     inputs: torch.Tensor,
     x_adv: torch.Tensor,
     preds: torch.Tensor,
     clean_logits: torch.Tensor,
+    *,
+    eps: float | None = None,
+    clip_min: float = 0.0,
+    clip_max: float = 1.0,
+    witness_steps: int = 50,
+    seed: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Final accounting shared by every minimum-norm attack.
 
@@ -141,12 +258,24 @@ def finalise_minimum_norm(
     across all four attacks makes `success` the only thing that separates
     "unbreakable" from "broken for free", which is what it is for.
 
+    Before that accounting, every sample the attack failed on is retried by
+    `l2_witness_search` inside the same cap, and any rescue is shrunk back
+    toward the clean input. That makes "at least as strong as a fixed-budget
+    attack at the same radius" a structural property of every minimum-norm
+    attack in the suite rather than something each one has to get right on
+    its own -- and it is the property whose absence silently overstates
+    robustness.
+
     Args:
         model: The model under attack, already in eval mode.
         inputs: Clean inputs.
         x_adv: The attack's candidate, already capped to `eps`.
         preds: The model's clean predictions.
         clean_logits: Logits on `inputs`, reported back for failed samples.
+        eps: The attack's L2 cap. None disables the witness retry.
+        clip_min, clip_max: Valid input range for the retry.
+        witness_steps: Descent steps per restart in the retry. 0 disables it.
+        seed: Seed for the retry's random restart, for determinism.
 
     Returns:
         ``(perturbed, success, logits)`` -- the batch to report, the
@@ -156,8 +285,25 @@ def finalise_minimum_norm(
     with torch.no_grad():
         logits, _, adv_preds, _ = model(x_adv)
     success = adv_preds.detach() != preds
-
     expand = (-1,) + (1,) * (inputs.ndim - 1)
+
+    # Anything the norm-minimising walk failed on gets one more chance inside
+    # the same cap. Without it the attack reports the model as robust exactly
+    # where its own search stalled -- see `l2_witness_search`.
+    if eps is not None and witness_steps > 0 and not bool(success.all()):
+        rescued, found = l2_witness_search(
+            model, inputs, preds, eps, witness_steps, clip_min, clip_max, seed
+        )
+        newly = found & ~success
+        if bool(newly.any()):
+            # Shrink back toward the clean input: the witness proves the cap
+            # is reachable, bisection recovers how little it actually took.
+            rescued = shrink_towards(model, inputs, rescued, preds)
+            x_adv = torch.where(newly.view(expand), rescued, x_adv)
+            with torch.no_grad():
+                logits, _, adv_preds, _ = model(x_adv)
+            success = adv_preds.detach() != preds
+
     perturbed = torch.where(success.view(expand), x_adv, inputs).detach()
     reported = torch.where(success[:, None], logits.detach(), clean_logits.detach())
     return perturbed, success, reported

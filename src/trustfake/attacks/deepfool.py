@@ -45,10 +45,14 @@ class DeepFool(AdversarialAttack):
         overshoot: float = 1.02,
         clip_min: float = 0.0,
         clip_max: float = 1.0,
+        witness_seed: int = 0,
     ):
         super().__init__(eps=eps, clip_min=clip_min, clip_max=clip_max)
         self.steps = steps
         self.overshoot = overshoot
+        # Seeds the random restart of the witness retry in
+        # `finalise_minimum_norm`; DeepFool itself is deterministic.
+        self.witness_seed = witness_seed
 
     @property
     def name(self) -> str:
@@ -130,7 +134,15 @@ class DeepFool(AdversarialAttack):
         # clean, so a failed sample's reported norm is 0 rather than the cap
         # -- see `finalise_minimum_norm` for why that consistency matters.
         x_adv, success, final_logits = finalise_minimum_norm(
-            model, inputs, candidate, preds, clean_logits.detach()
+            model,
+            inputs,
+            candidate,
+            preds,
+            clean_logits.detach(),
+            eps=self.eps,
+            clip_min=self.clip_min,
+            clip_max=self.clip_max,
+            seed=self.witness_seed,
         )
         delta = (x_adv - inputs).flatten(1)
 

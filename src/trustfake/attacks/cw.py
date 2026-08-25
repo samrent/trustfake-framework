@@ -125,7 +125,14 @@ class CarliniWagner(AdversarialAttack):
         # Success measured after the eps cap, and every failure returned
         # clean, so a failed sample's reported norm is 0 rather than the cap.
         x_adv, success, final_logits = finalise_minimum_norm(
-            model, inputs, candidate, preds, clean_logits.detach()
+            model,
+            inputs,
+            candidate,
+            preds,
+            clean_logits.detach(),
+            eps=self.eps,
+            clip_min=self.clip_min,
+            clip_max=self.clip_max,
         )
         delta = (x_adv - inputs).flatten(1)
 

@@ -257,6 +257,121 @@ def test_pdpgd_never_loses_to_a_fixed_budget_pgd_witness(
     )
 
 
+#: Every minimum-norm attack in the suite, at its L2 cap. The witness
+#: property is a property of the FAMILY, not of whichever member was last
+#: debugged -- `finalise_minimum_norm` gives it to all of them structurally,
+#: and this list is what keeps a new member from opting out by accident.
+L2_MIN_NORM_ATTACKS = {
+    "deepfool": lambda eps: DeepFool(eps=eps, steps=50),
+    "bb": lambda eps: BrendelBethge(eps=eps, steps=100),
+    "cw": lambda eps: CarliniWagner(eps=eps, steps=100),
+    "pdpgd": lambda eps: PDPGD(eps=eps, steps=100, norm="l2"),
+}
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.parametrize("radius", [0.4, 0.6])
+@pytest.mark.parametrize("name", sorted(L2_MIN_NORM_ATTACKS))
+def test_no_min_norm_attack_loses_to_an_l2_witness(name, radius, seed, make_conv_model):
+    """The witness invariant, for all four attacks rather than one.
+
+    PGD-L2 flipping a sample inside ``||delta||_2 <= R`` proves the true
+    minimum L2 norm for that sample is at most R. A minimum-norm attack
+    capped at the same R that reports ``success=False`` there is reporting
+    its own search having stalled as robustness the model does not have.
+
+    This used to fail for two of the four, in different ways and for
+    different reasons -- DeepFool's linearisation stopped at the first flip
+    and never revisited, so a curved boundary left it short; BB depended
+    entirely on its start search, and when every candidate start failed the
+    sample came back clean no matter how easy it actually was (seed 1 was
+    0.031 against a witness rate of 0.156). Two separate causes producing one
+    identical, invisible symptom is exactly why the guarantee now lives in
+    the shared final accounting instead of in each attack.
+    """
+    model = make_conv_model(seed=seed)
+    torch.manual_seed(100 + seed)
+    inputs = torch.rand(32, 3, 8, 8)
+
+    witness = PGDL2(eps=radius, steps=100)(model, inputs)
+    clean = _preds(model, inputs)
+    with torch.no_grad():
+        broken_by_witness = model(witness)[2] != clean
+    assert broken_by_witness.any(), "witness broke nothing; test is vacuous"
+
+    result = L2_MIN_NORM_ATTACKS[name](radius).run(model, inputs)
+
+    missed = broken_by_witness & ~result.success
+    assert not missed.any(), (
+        f"{name} reported failure on {int(missed.sum())} sample(s) that PGD-L2 "
+        f"broke at the identical radius {radius}; the true minimum norm for "
+        "those is provably within the cap"
+    )
+
+
+@pytest.mark.parametrize("name", sorted(L2_MIN_NORM_ATTACKS))
+def test_rescued_samples_still_report_a_minimal_norm(name, make_conv_model):
+    """The retry must not buy coverage by reporting the cap.
+
+    Answering "is the cap reachable" is not the same as answering "how little
+    does it take", and a rescue left un-shrunk would report ``l2_norm == eps``
+    -- turning a minimum-norm column into a column of the cap, which is the
+    same number for every model and therefore measures nothing. Bisecting
+    back toward the clean input recovers the actual distance.
+    """
+    radius = 0.6
+    model = make_conv_model(seed=1)
+    torch.manual_seed(101)
+    inputs = torch.rand(32, 3, 8, 8)
+
+    result = L2_MIN_NORM_ATTACKS[name](radius).run(model, inputs)
+    solved = result.success
+    assert solved.any(), "nothing solved; test is vacuous"
+
+    norms = result.l2_norm[solved]
+    # Nothing should sit at the cap: that is the signature of a rescue that
+    # was never shrunk.
+    assert (norms < radius * 0.995).float().mean() > 0.9
+    # And a failure is exactly zero, not "whatever the search left behind".
+    assert torch.equal(
+        result.l2_norm[~solved], torch.zeros_like(result.l2_norm[~solved])
+    )
+
+
+def test_the_four_agree_on_the_minimum_norm(make_conv_model):
+    """Four independent searches for the same quantity should land close
+    together. A large disagreement means one has stalled -- and a stalled
+    minimum-norm attack still returns a number and still looks like a
+    completed run, which is why agreement is worth asserting rather than
+    assuming."""
+    radius = 0.6
+    model = make_conv_model(seed=1)
+    torch.manual_seed(101)
+    inputs = torch.rand(32, 3, 8, 8)
+
+    medians = {}
+    solved_by_all = None
+    results = {}
+    for name, build in L2_MIN_NORM_ATTACKS.items():
+        results[name] = build(radius).run(model, inputs)
+        solved_by_all = (
+            results[name].success
+            if solved_by_all is None
+            else solved_by_all & results[name].success
+        )
+    assert solved_by_all.any(), "no sample solved by all four; test is vacuous"
+
+    for name, result in results.items():
+        medians[name] = float(result.l2_norm[solved_by_all].median())
+
+    best = min(medians.values())
+    for name, value in medians.items():
+        assert value <= best * 1.25, (
+            f"{name} needs {value:.4f} where the best of the four needs "
+            f"{best:.4f}; that gap is a stalled search, not a harder problem"
+        )
+
+
 @pytest.mark.parametrize("norm", ["linf", "l2"])
 def test_pdpgd_is_invariant_to_the_models_logit_scale(norm, make_conv_model):
     """Multiplying every logit by a constant moves no decision boundary, so

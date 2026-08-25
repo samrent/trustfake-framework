@@ -301,7 +301,15 @@ class BrendelBethge(AdversarialAttack):
         # `l2_norm == 0` instead of `l2_norm == eps` -- the walk's leftovers
         # are not a measurement.
         x_adv, success, final_logits = finalise_minimum_norm(
-            model, inputs, candidate, preds, clean_logits
+            model,
+            inputs,
+            candidate,
+            preds,
+            clean_logits,
+            eps=self.eps,
+            clip_min=self.clip_min,
+            clip_max=self.clip_max,
+            seed=self.seed,
         )
         delta = (x_adv - inputs).flatten(1)
 

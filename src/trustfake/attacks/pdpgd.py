@@ -276,7 +276,14 @@ class PDPGD(AdversarialAttack):
         # Success measured after the eps cap, and every failure returned
         # clean, so a failed sample's reported norm is 0 rather than the cap.
         x_adv, success, final_logits = finalise_minimum_norm(
-            model, inputs, candidate, preds, clean_logits
+            model,
+            inputs,
+            candidate,
+            preds,
+            clean_logits,
+            eps=self.eps if self.norm == "l2" else None,
+            clip_min=self.clip_min,
+            clip_max=self.clip_max,
         )
         delta = (x_adv - inputs).flatten(1)
 
