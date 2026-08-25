@@ -169,6 +169,7 @@ accuracy. `eps` is an L∞ budget except for the minimum-norm attacks
 | `pgd` | prediction | Madry et al. 2018 | random start, seeded |
 | `deepfool` | prediction | Moosavi-Dezfooli et al. 2016 | min-norm; `eps` is an L2 cap |
 | `cw` | prediction | Carlini & Wagner 2017 | L2; `eps` is an L2 cap |
+| `tr` | prediction | Yao et al. 2019 | trust-region, adaptive step |
 | `apgd` | prediction | Croce & Hein 2020 | via `autoattack` |
 | `fab` | prediction | Croce & Hein 2020 | min-norm; via `autoattack` |
 | `square` | prediction | Andriushchenko et al. 2020 | query-based; via `autoattack` |
@@ -176,6 +177,9 @@ accuracy. `eps` is an L∞ budget except for the minimum-norm attacks
 | `uncertainty_fgsm` | confidence | Disrupting Deep Uncertainty Estimation | label-free; attacks the uncertainty score |
 | `ace` | confidence | Galil & El-Yaniv 2021 | per-sample eps search, accept test |
 | `param_ace` | confidence | Buerger et al. 2024 (arXiv:2405.13922) | (η,ω)-ACE family |
+| `overconf` | confidence | Ledda et al. 2025 | label-free, label-preserving |
+| `underconf` | confidence | Ledda et al. 2025 | label-free; toward max entropy |
+| `evidence_pgd` | confidence | EV-AT (arXiv:2607.03075) | maximises Dirichlet drift; needs `wrapper=evidential` |
 
 The `autoattack`-package wrappers drive the model through a logits adapter and
 seed their randomised components for determinism; the ensemble excludes the
@@ -184,11 +188,64 @@ few-class detector (see the wrapper docstring). Attacks with an accept test or
 a min-norm search return an `AttackResult` carrying the per-sample effective
 epsilon and the accept-check logits, which the evaluation pipe scores directly.
 
-Not yet ported (each needs a separate, non-PyPI research repository or a new
-heavyweight dependency, so none could be vendored and verified offline here):
-**A³** (adaptive AutoAttack), **TR** (trust-region), **PDPGD**, and **BB**
-(Brendel & Bethge, via foolbox). Adding any of them is a dependency decision
-worth taking deliberately.
+Not yet ported: **A³** (adaptive AutoAttack), **PDPGD**, and **BB** (Brendel &
+Bethge, via foolbox) each need a separate non-PyPI research repository or a new
+heavyweight dependency, so none could be vendored and verified offline. Adding
+any of them is a dependency decision worth taking deliberately.
+
+## Methods and training pipelines
+
+The training pipeline is chosen with `experiment.training_pipe`:
+
+| pipe | what | key config |
+|---|---|---|
+| `standard` | ordinary training | — |
+| `pgd_at` | PGD adversarial training (Madry 2018) | `adv_eps`, `adv_steps`, `adv_warmup_epochs` |
+| `trades` | TRADES (Zhang 2019) | `trades_beta`, `adv_eps`, `adv_steps` |
+| `evidential_adversarial` | Evidential Adversarial Training (EV-AT) | `beta`, `rea_mode`, `adv_eps`, `adv_steps` |
+
+**EV-AT** (arXiv:2607.03075) is the evidential method the harness benchmarks
+against the MSP and temperature-scaling baselines. The backbone becomes an
+evidential head (`wrapper=evidential`): evidence `e = softplus(logits)`,
+Dirichlet `α = e + 1`, posterior mean `π̄ = α/S`, and the selective score is
+the posterior entropy `u = H[Cat(π̄)]`. Training minimises the evidential loss
+`L_EV` (`loss=evidential`) plus `β·L_REA`, where `L_REA` aligns the clean and
+adversarial posteriors in log-Dirichlet space (IKL by default) and the
+adversarial examples come from the evidence-targeted adversary. A full run:
+
+```bash
+python src/train.py experiment.name=ev_at \
+  experiment.training_pipe=evidential_adversarial \
+  wrapper=evidential loss=evidential \
+  uncertainty_score=evidential_predictive_entropy
+```
+
+Report robustness at a forensic epsilon: an 8/255 ball can erase the
+small-amplitude, high-frequency evidence a deepfake detector relies on and
+collapse adversarial training, so lower `adv_eps` (e.g. `0.00784` = 2/255) or
+ramp it with `adv_warmup_epochs`. Adversarial-training arms must be matched on
+optimiser steps (same `max_epochs`/schedule), not wall-clock, to compare method
+rather than budget.
+
+## Selective moderation (WP4)
+
+`src/test.py` fits a two-threshold moderation policy on the clean calib split
+(minimise review rate subject to a residual-risk SLA) and freezes it, then
+reports per condition — clean and adversarial — `coverage`, `review_rate`,
+`residual_risk`, `missed_fake_rate` and `false_flag_rate`, plus an
+uncertainty-gated two-axis variant. Two thresholds on `p(fake)` (= `1 − P(real)`
+for the 3-class detector) rather than one on confidence, because moderation
+costs are asymmetric. Residual risk is `NaN`, never `0.0`, on an empty
+auto-decide zone, and an infeasible SLA degrades to review-everything. Tune with
+`moderation_sla` and `moderation_review_budget`; disable with `moderate=false`.
+
+## Trivial baselines and verification
+
+`python src/baselines.py` reports the metadata floor every detector accuracy
+must be read against — chiefly `width == height → fake`, computed from the
+original image bytes over a split's shards. `trustfake.data.verify` checks the
+split manifest is reproducible (deterministic, firewall-consistent) and that a
+finished run left a checkpoint and saved config behind.
 
 ## Baselines
 
