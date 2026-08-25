@@ -69,7 +69,7 @@ This trains the model defined in [`configs/training/train_config.yaml`](configs/
 ```bash
 python src/test.py experiment.name=my_experiment
 ```
-This loads the best checkpoint saved by the matching training run (same `experiment.name`, model and seed) and reports classification, failure-detection and selective-classification metrics. Add `+attack=fgsm` to also evaluate robustness under an adversarial attack:
+This loads the best checkpoint saved by the matching training run (same `experiment.name`, model and seed) and reports classification, failure-detection and selective-classification metrics (AURC/AUGRC/E-AURC as block-size-weighted means over distinct operating points, tie blocks collapsed -- see [`selective_classification.py`](src/trustfake/metrics/evaluation/selective_classification.py) for the convention). Add `+attack=fgsm` to also evaluate robustness under an adversarial attack:
 ```bash
 python src/test.py experiment.name=my_experiment +attack=fgsm
 ```
