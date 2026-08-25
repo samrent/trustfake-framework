@@ -74,7 +74,7 @@ This loads the best checkpoint saved by the matching training run (same `experim
 python src/test.py experiment.name=my_experiment +attack=fgsm
 ```
 
-See [`jobs/train_resnet18_one_epoch.sh`](jobs/train_resnet18_one_epoch.sh) for a full example. Prefix commands with `uv run` if you're using the `uv` setup instead of Docker.
+See [`jobs/train_resnet18.sh`](jobs/train_resnet18.sh) for a full example. Prefix commands with `uv run` if you're using the `uv` setup instead of Docker.
 
 ### Jupyter notebooks
 
