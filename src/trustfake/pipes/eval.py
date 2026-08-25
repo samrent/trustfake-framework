@@ -151,13 +151,16 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         cm: Metric,
         roc_curve: Metric,
         storage_key: str,
+        output: ClassificationModelOutput | None = None,
     ):
         """
-        Runs the model on `inputs`, updates the given metric collections against
-            `targets`, and stores the per-sample errors/uncertainty under
-            `self._storage[storage_key]`.
+        Runs the model on `inputs` (unless a precomputed `output` is given,
+            e.g. derived from an attack's accept-check forward), updates the
+            given metric collections against `targets`, and stores the
+            per-sample errors/uncertainty under `self._storage[storage_key]`.
         """
-        output = self._run_model(inputs)
+        if output is None:
+            output = self._run_model(inputs)
         classification_metrics.update(output.preds.long(), targets.long())
         cm.update(output.preds.long(), targets.long())
         roc_curve.update(output.probs, targets.long())
@@ -202,9 +205,35 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
 
         if self.attack is not None:
             with torch.enable_grad():
-                perturbed_inputs = self.attack(self.model, inputs, targets)
+                result = self.attack.run(self.model, inputs, targets)
+
+            # Prefer the logits from the attack's accept-check forward: a
+            # re-forward on the perturbed batch is not always bit-identical
+            # (batch-shape-dependent backends), so a boundary sample can
+            # flip and misreport quantities the attack guarantees. Falls
+            # back to a re-forward when the wrapper cannot derive its
+            # uncertainty from a single forward (e.g. MC dropout).
+            adv_output = None
+            if result.accepted_logits is not None:
+                derived = self.model.outputs_from_logits(result.accepted_logits)
+                if derived is not None:
+                    logits, probs, preds, uncertainty = derived
+                    adv_output = self._model_output_schema_cls(
+                        logits=logits,
+                        probs=probs,
+                        preds=preds,
+                        uncertainty=uncertainty,
+                    )
+                else:
+                    logger.warning(
+                        f"{self.attack.name} supplied accepted logits, but "
+                        f"{type(self.model).__name__} cannot derive its "
+                        "uncertainty from a single forward; re-running the "
+                        "model on the perturbed batch instead."
+                    )
+
             self._evaluate(
-                perturbed_inputs,
+                result.perturbed,
                 targets,
                 self.adv_classification_metrics,
                 self.adv_fd_metrics,
@@ -212,7 +241,27 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
                 self.adv_cm,
                 self.adv_roc_curve,
                 storage_key=self.attack.name,
+                output=adv_output,
             )
+            self._log_attack_metadata(result)
+
+    def _log_attack_metadata(self, result) -> None:
+        """
+        Log what the attack itself measured: label preservation against the
+        clean prediction (from the accept-check forward when present -- for
+        ACE this is exactly 1.0 by construction), and the mean per-sample
+        L_inf perturbation actually applied.
+        """
+        prefix = f"{self.attack.name}_"
+        if result.accepted_logits is not None and result.clean_preds is not None:
+            preservation = (
+                (result.accepted_logits.argmax(dim=1) == result.clean_preds)
+                .float()
+                .mean()
+            )
+            self.log(prefix + "label_preservation", preservation)
+        if result.effective_eps is not None:
+            self.log(prefix + "effective_eps_mean", result.effective_eps.mean())
 
     def on_test_epoch_end(self):
         """

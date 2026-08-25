@@ -58,6 +58,21 @@ class TrustFakeWrapper(ABC, pl.LightningModule):
         """
         ...
 
+    def outputs_from_logits(
+        self, logits: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None:
+        """
+        Derive the full (logits, probs, preds, uncertainty) output from the
+        logits of a single forward pass, or return None when this wrapper's
+        uncertainty cannot be derived that way (e.g. MC dropout needs
+        multiple stochastic passes).
+
+        Used by the evaluation pipe to score an attack's accept-check
+        forward directly instead of re-running the model on the perturbed
+        batch (see `trustfake.attacks.abc.AttackResult`).
+        """
+        return None
+
     def on_train_epoch_start(self) -> None:
         super().on_train_epoch_start()
         self.uncertainty_score = self.uncertainty_score.to(self.device)
