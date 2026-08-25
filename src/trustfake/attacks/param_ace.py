@@ -53,9 +53,6 @@ class ParamACE(AdversarialAttack):
     """
 
     family = AttackFamily.CONFIDENCE
-    direction = AttackDirection.BOTH
-    # omega='true' requires ground truth; the other omega modes do not.
-    uses_labels = True
 
     def __init__(
         self,
@@ -76,10 +73,21 @@ class ParamACE(AdversarialAttack):
         self.omega = omega
         self.alpha = alpha if alpha is not None else 2.5 * eps / max(steps, 1)
         self.steps = steps
+        # Taxonomy is per-instance here, not per-class: (eta, omega) IS the
+        # attack. eta=+1 pushes cross-entropy to omega up, lowering confidence
+        # in that label; eta=-1 raises it. And only omega='true' consults the
+        # ground truth -- reporting the label-free default as label-using
+        # would overstate the threat model the row was produced under, which
+        # is the confusion the registry exists to prevent.
+        self.direction = AttackDirection.UNDER if eta > 0 else AttackDirection.OVER
+        self.uses_labels = omega == "true"
 
     @property
     def name(self) -> str:
-        return "param_ace"
+        # (eta, omega) is the whole point of the parameterised family, so a
+        # sweep over it must not collapse every member onto one logged name
+        # and one log directory.
+        return f"param_ace_eta{'p' if self.eta > 0 else 'm'}1_{self.omega}"
 
     def run(
         self,

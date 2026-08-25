@@ -12,6 +12,7 @@ __all__ = [
     "AttackFamily",
     "AttackDirection",
     "attack_registry",
+    "describe",
 ]
 
 
@@ -52,11 +53,20 @@ class AttackDirection(StrEnum):
 def attack_registry() -> dict[str, dict]:
     """Taxonomy of every exported attack: family, direction, label use, norm.
 
-    Built by instantiating each attack at its defaults, so it cannot drift
-    from the implementations the way a hand-maintained table does. Used to
-    group a results table by threat family and to flag which rows depend on
-    ground-truth labels (an attacker who has them is a different, stronger
-    threat model than one who does not).
+    Built by instantiating each exported attack at its defaults, so it cannot
+    drift from the implementations the way a hand-maintained table does.
+
+    Keyed by CLASS name, not by the logged `name`. Several attacks carry a
+    parameter that changes the threat model and therefore the logged name --
+    `ACE(quantize=True)` reports `ace_uint8`, `ParamACE` encodes its
+    `(eta, omega)` -- so a name-keyed catalogue could never enumerate them
+    from defaults alone, and would quietly omit exactly the variants most
+    likely to be misread. This is the catalogue of what EXISTS; for a
+    specific run, read the taxonomy off the instance you ran (or pass it to
+    :func:`describe`), which is always exact.
+
+    `default_name` is the logged name of the default configuration, which is
+    what most configs produce.
     """
     from trustfake import attacks as _attacks
 
@@ -67,16 +77,27 @@ def attack_registry() -> dict[str, dict]:
             continue
         if obj is AdversarialAttack:
             continue
-        instance = obj()
-        registry[instance.name] = {
-            "class": symbol,
-            "family": str(instance.family),
-            "direction": str(instance.direction),
-            "uses_labels": instance.uses_labels,
-            "norm": instance.norm,
-            "minimum_norm": instance.minimum_norm,
-        }
+        registry[symbol] = describe(obj())
     return registry
+
+
+def describe(attack: "AdversarialAttack") -> dict:
+    """Taxonomy of one attack INSTANCE, exactly as configured.
+
+    Prefer this over :func:`attack_registry` when annotating results: the
+    instance is the thing that produced the row, and for a parameterised
+    attack the class-level defaults can differ from it in ways that matter
+    (whether ground truth was used, which direction confidence was pushed).
+    """
+    return {
+        "class": type(attack).__name__,
+        "default_name": attack.name,
+        "family": str(attack.family),
+        "direction": str(attack.direction),
+        "uses_labels": attack.uses_labels,
+        "norm": attack.norm,
+        "minimum_norm": attack.minimum_norm,
+    }
 
 
 @dataclass

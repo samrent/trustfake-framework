@@ -64,7 +64,12 @@ class ACE(AdversarialAttack):
 
     @property
     def name(self) -> str:
-        return "ace"
+        # The name carries the threat model, because the name is what keys the
+        # log directory and the metric prefixes. Quantised and unquantised ACE
+        # are different attackers -- the docstring above says to report which
+        # one a row is, and the name is what reports it. Sharing one would let
+        # an `ace_uint8` run silently overwrite an `ace` one.
+        return "ace_uint8" if self.quantize else "ace"
 
     def run(
         self,
