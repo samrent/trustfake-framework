@@ -14,6 +14,7 @@ from trustfake.attacks import AdversarialAttack
 from trustfake.logging import get_logger
 from trustfake.metrics.calibration import get_calibration_metrics
 from trustfake.metrics.evaluation import (
+    get_detection_metrics,
     get_failure_detection_metrics,
     get_multiclass_classification_metrics,
     get_selective_classification_metrics,
@@ -48,6 +49,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         num_classes: int,
         attack: AdversarialAttack | None = None,
         moderation_policy: ModerationPolicy | None = None,
+        real_class: int = 0,
     ):
         """
         Args:
@@ -62,11 +64,16 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             num_classes (int): The number of classes in the classification task.
             attack (AdversarialAttack | None): Optional adversarial attack to apply
                 during evaluation.
+            moderation_policy (ModerationPolicy | None): Frozen WP4 policy the
+                deployment indicators are reported against, per condition.
+            real_class (int): Index of the real class; every other class folds
+                to fake for the binary detection AUROC. SID-Set uses 0.
         """
         super().__init__()
         self.model = model
         self._model_output_schema_cls = model_output_schema_cls
         self._num_classes = num_classes
+        self._real_class = real_class
         self.attack = attack
         self.moderation_policy = moderation_policy
 
@@ -79,6 +86,13 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
 
         # Failure detection metrics
         self.nat_fd_metrics = self.fd_metrics.clone(prefix="nat_")
+
+        # Detection metrics -- the AUROC of the TASK (does p(fake) rank fakes
+        # above reals), which is a different question from fd_auroc (does
+        # uncertainty rank the model's errors above its correct answers).
+        # Reporting one under the other's name is the cheap embarrassing
+        # error, so they are separate collections consuming separate inputs.
+        self.nat_detection_metrics = self.detection_metrics.clone(prefix="nat_")
 
         # Selective classification metrics
         self.nat_selective_classification_metrics = (
@@ -105,6 +119,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self.adv_cm = self.confusion_matrix.clone()
             self.adv_roc_curve = self.roc_curve.clone()
             self.adv_fd_metrics = self.fd_metrics.clone(prefix=prefix)
+            self.adv_detection_metrics = self.detection_metrics.clone(prefix=prefix)
             self.adv_selective_classification_metrics = (
                 self.selective_classification_metrics.clone(prefix=prefix)
             )
@@ -140,6 +155,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         self.nat_cm.to(self.device)
         self.nat_roc_curve.to(self.device)
         self.nat_fd_metrics.to(self.device)
+        self.nat_detection_metrics.to(self.device)
         self.nat_selective_classification_metrics.to(self.device)
         self.nat_calibration_metrics.to(self.device)
         if self.attack is not None:
@@ -147,6 +163,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self.adv_cm.to(self.device)
             self.adv_roc_curve.to(self.device)
             self.adv_fd_metrics.to(self.device)
+            self.adv_detection_metrics.to(self.device)
             self.adv_selective_classification_metrics.to(self.device)
             self.adv_calibration_metrics.to(self.device)
 
@@ -164,6 +181,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         failure_detection_metrics: MetricCollection,
         selective_classification_metrics: MetricCollection,
         calibration_metrics: MetricCollection,
+        detection_metrics: MetricCollection,
         cm: Metric,
         roc_curve: Metric,
         storage_key: str,
@@ -188,6 +206,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             output.probs, targets.long(), output.uncertainty
         )
         calibration_metrics.update(output.probs, targets.long())
+        detection_metrics.update(output.probs, targets.long())
 
         # --- Storage for post-hoc analysis ---
         self._storage[storage_key]["uncertainties"].append(
@@ -218,6 +237,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self.nat_fd_metrics,
             self.nat_selective_classification_metrics,
             self.nat_calibration_metrics,
+            self.nat_detection_metrics,
             self.nat_cm,
             self.nat_roc_curve,
             storage_key="nat",
@@ -259,6 +279,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
                 self.adv_fd_metrics,
                 self.adv_selective_classification_metrics,
                 self.adv_calibration_metrics,
+                self.adv_detection_metrics,
                 self.adv_cm,
                 self.adv_roc_curve,
                 storage_key=self.attack.name,
@@ -308,6 +329,8 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         nat_calibration_metrics = self.nat_calibration_metrics.compute()
         self.log_dict(nat_calibration_metrics)
         self.nat_calibration_metrics.reset()
+        self.log_dict(self.nat_detection_metrics.compute())
+        self.nat_detection_metrics.reset()
 
         if self.attack is not None:
             adv_classification_metrics = self.adv_classification_metrics.compute()
@@ -335,6 +358,8 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             adv_calibration_metrics = self.adv_calibration_metrics.compute()
             self.log_dict(adv_calibration_metrics)
             self.adv_calibration_metrics.reset()
+            self.log_dict(self.adv_detection_metrics.compute())
+            self.adv_detection_metrics.reset()
 
         # Selective moderation (WP4): apply the frozen policy per condition.
         self._log_moderation()
@@ -452,6 +477,16 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             MetricCollection: A collection of calibration metrics.
         """
         return get_calibration_metrics(num_classes=self._num_classes)
+
+    @property
+    def detection_metrics(self) -> MetricCollection:
+        """
+        Property that defines the detection-task metrics (fake vs real).
+
+        Returns:
+            MetricCollection: AUROC of ranking fakes above reals by p(fake).
+        """
+        return get_detection_metrics(real_class=self._real_class)
 
     @property
     def selective_classification_metrics(self) -> MetricCollection:
