@@ -114,27 +114,55 @@ def fit_thresholds(
     """
     p = np.asarray(p_fake, dtype=np.float64)
     y = np.asarray(y_binary).astype(int)
+    n = p.size
     # Require enough auto-decisions that the SLA could have been violated at
     # all: the tightest thresholds "satisfy" any SLA by deciding almost nothing.
     if min_auto is None:
         min_auto = int(np.ceil(1.0 / max(sla_residual_risk, 1e-9)))
     qs = np.unique(np.quantile(p, np.linspace(0, 1, grid)))
-    best, best_review = (0.0, 1.0), 1.0
-    for t_low in qs:
-        for t_high in qs[qs >= t_low]:
-            r = evaluate_policy(p, y, t_low, t_high)
-            if r["n_auto"] < min_auto:
-                continue
-            if (
-                not np.isfinite(r["residual_risk"])
-                or r["residual_risk"] > sla_residual_risk
-            ):
-                continue
-            if sla_missed_fake is not None and r["missed_fake_rate"] > sla_missed_fake:
-                continue
-            if r["review_rate"] < best_review:
-                best_review, best = r["review_rate"], (float(t_low), float(t_high))
-    return best
+
+    # Vectorised over the (t_low, t_high) grid. Sort once; every region count
+    # comes from searchsorted + cumulative sums, so the whole search is
+    # O(grid^2) arithmetic rather than O(grid^2 * n) policy evaluations.
+    order = np.argsort(p, kind="stable")
+    ps, ys = p[order], y[order]
+    cum_fake = np.concatenate([[0], np.cumsum(ys)])  # fakes among the first k
+    total_real = int((y == 0).sum())
+
+    # ALLOW region p < t_low: assert real, so an error is a fake caught there.
+    k_low = np.searchsorted(ps, qs, side="left")
+    n_allow = k_low.astype(np.float64)
+    allow_err = cum_fake[k_low].astype(np.float64)  # fakes with p < t_low
+    n_fake_below = cum_fake[k_low]  # for the missed-fake rate
+    total_fake = int(cum_fake[-1])
+
+    # FLAG region p > t_high: assert fake, so an error is a real flagged there.
+    k_high = np.searchsorted(ps, qs, side="right")
+    n_flag = (n - k_high).astype(np.float64)
+    reals_below = k_high - cum_fake[k_high]
+    flag_err = (total_real - reals_below).astype(np.float64)  # reals with p > t_high
+
+    valid = qs[:, None] <= qs[None, :]  # t_low <= t_high (disjoint regions)
+
+    auto = n_allow[:, None] + n_flag[None, :]
+    err = allow_err[:, None] + flag_err[None, :]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        residual = np.where(auto > 0, err / auto, np.inf)
+    review = 1.0 - auto / n
+    # missed fakes = fakes auto-ALLOWED = fakes with p < t_low (t_high-independent)
+    missed_fake = (n_fake_below / max(total_fake, 1))[:, None] * np.ones_like(auto)
+
+    feasible = valid & (auto >= min_auto) & np.isfinite(residual)
+    feasible &= residual <= sla_residual_risk
+    if sla_missed_fake is not None:
+        feasible &= missed_fake <= sla_missed_fake
+    if not feasible.any():
+        return (0.0, 1.0)
+
+    review_masked = np.where(feasible, review, np.inf)
+    flat = int(np.argmin(review_masked))
+    i, j = flat // qs.size, flat % qs.size
+    return (float(qs[i]), float(qs[j]))
 
 
 def fit_uncertainty_gate(

@@ -82,3 +82,31 @@ def test_attack_that_raises_pfake_on_reals_raises_false_flags():
     assert pol.evaluate(probs_clean, targets)["false_flag_rate"] == 0.0
     probs_attacked = np.tile([0.1, 0.45, 0.45], (100, 1))  # pushed to look fake
     assert pol.evaluate(probs_attacked, targets)["false_flag_rate"] == 1.0
+
+
+def test_vectorised_fit_matches_bruteforce_optimum():
+    """The vectorised threshold search must return the same optimum (same best
+    achievable review rate at the SLA) as an O(grid^2 * n) brute force."""
+
+    def brute(p, y, sla, grid=200):
+        min_auto = int(np.ceil(1.0 / max(sla, 1e-9)))
+        qs = np.unique(np.quantile(p, np.linspace(0, 1, grid)))
+        best_rev = 1.0
+        for t_low in qs:
+            for t_high in qs[qs >= t_low]:
+                r = evaluate_policy(p, y, t_low, t_high)
+                if r["n_auto"] < min_auto:
+                    continue
+                if not np.isfinite(r["residual_risk"]) or r["residual_risk"] > sla:
+                    continue
+                best_rev = min(best_rev, r["review_rate"])
+        return best_rev
+
+    rng = np.random.default_rng(7)
+    for _ in range(4):
+        y = rng.integers(0, 2, 2000)
+        p = np.clip(0.5 * y + 0.3 * rng.standard_normal(2000) + 0.25, 0, 1)
+        t_low, t_high = fit_thresholds(p, y, 0.1)
+        r = evaluate_policy(p, y, t_low, t_high)
+        assert r["residual_risk"] <= 0.1 + 1e-9
+        assert r["review_rate"] == pytest.approx(brute(p, y, 0.1), abs=1e-9)
