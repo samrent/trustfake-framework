@@ -88,6 +88,81 @@ def test_baselines_reads_original_dims_not_resized(sid_set_with_artifact):
     assert b["n"] == 1 * 10  # smoke calib = 1 shard
 
 
+@pytest.fixture
+def sid_set_with_generation_scale(tmp_path):
+    """The decode-scale residue in miniature: fakes are generated at
+    1024x1024, reals are 640x480. Note the reals here are also square-free,
+    so both rules are exact and the two can be told apart by which control
+    removes them."""
+
+    def rows(prefix, n):
+        out = []
+        for j in range(n):
+            if j % 2 == 0:
+                out.append((f"{prefix}_{j}", 0, _jpeg_bytes(640, 480)))
+            else:
+                out.append((f"{prefix}_{j}", 1, _png_bytes(1024, 1024)))
+        return out
+
+    for i in range(2):
+        _write_shard(tmp_path / f"train-{i:05d}-of-00002.parquet", rows(f"t{i}", 6))
+    for i in range(3):
+        _write_shard(
+            tmp_path / f"validation-{i:05d}-of-00003.parquet", rows(f"v{i}", 6)
+        )
+    return tmp_path
+
+
+def test_shortside_residue_is_reported(sid_set_with_generation_scale):
+    """The baseline that a centre crop does NOT remove: cropping preserves
+    the short side exactly, so 'short side == 1024 -> fake' survives the
+    geometry control that kills 'width == height'. Without it in the table a
+    controlled row would look cleaner than it is."""
+    b = compute_trivial_baselines(
+        sid_set_with_generation_scale, profile="smoke", split_role="test"
+    )
+
+    assert b["shortside1024_is_fake"] == 1.0
+    assert b["shortside1024_rate_by_label"]["0"] == 0.0
+    assert b["shortside1024_rate_by_label"]["1"] == 1.0
+
+
+def test_headline_is_protocol_aware(sid_set_with_artifact):
+    """Printing the raw 0.98 next to a geometry-controlled row would misstate
+    the protocol -- and in the direction that makes an honest result look
+    like a failure to clear a bar it was never read against."""
+    b = compute_trivial_baselines(
+        sid_set_with_artifact, profile="smoke", split_role="test"
+    )
+
+    raw = headline(b)
+    assert "TRIVIAL BASELINE" in raw
+    assert "width==height" in raw
+
+    for condition in ("squarecrop", "square", "nonsquare", "matched"):
+        controlled = headline(b, condition=condition)
+        assert "GEOMETRY-CONTROLLED" in controlled, condition
+        assert f"'{condition}'" in controlled
+        assert f"{b['majority_class']:.4f}" in controlled
+        # the raw number is named as the RAW number, never as this row's
+        assert "On the RAW" in controlled
+
+    # An uncontrolled condition keeps the plain wording.
+    assert "TRIVIAL BASELINE" in headline(b, condition="jpeg_q40")
+    assert "TRIVIAL BASELINE" in headline(b, condition=None)
+
+
+def test_headline_always_names_the_surviving_residue(sid_set_with_artifact):
+    """Both branches must carry it: the geometry control is evidence about
+    'width == height' and about nothing else."""
+    b = compute_trivial_baselines(
+        sid_set_with_artifact, profile="smoke", split_role="test"
+    )
+
+    for condition in (None, "squarecrop"):
+        assert "short side == 1024" in headline(b, condition=condition)
+
+
 def test_verify_manifest_reproducible_passes(sid_set_with_artifact):
     fails = verify_manifest_reproducible(sid_set_with_artifact, PROFILES["smoke"])
     assert fails == []

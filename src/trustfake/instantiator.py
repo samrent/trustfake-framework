@@ -25,6 +25,7 @@ __all__ = [
     "CallbacksHandler",
     "config_parsing",
     "save_experiment_config",
+    "select_evaluation_condition",
 ]
 
 # Each wrapper drives `uncertainty_score.update` differently.
@@ -77,6 +78,7 @@ class Instantiator:
     - Trainer
     - Callbacks
     - Attacks
+    - Corruptions
     """
 
     def __init__(self, cfg: DictConfig):
@@ -102,6 +104,8 @@ class Instantiator:
             loss = self.instantiate_loss()
         if hasattr(self.cfg, "attack"):
             attack = self.instantiate_attack()
+        if hasattr(self.cfg, "corruption"):
+            corruption = self.instantiate_corruption()
         if hasattr(self.cfg, "callbacks"):
             callbacks = self.instantiate_callbacks()
             if callbacks:
@@ -118,6 +122,7 @@ class Instantiator:
             "uncertainty_score": uncertainty_score,
             "loss": loss if hasattr(self.cfg, "loss") else None,
             "attack": attack if hasattr(self.cfg, "attack") else None,
+            "corruption": corruption if hasattr(self.cfg, "corruption") else None,
             "trainer": trainer if hasattr(self.cfg, "trainer") else None,
             "callbacks": callbacks if hasattr(self.cfg, "callbacks") else None,
         }
@@ -214,6 +219,33 @@ class Instantiator:
             raise ConfigAttributeError(msg)
 
         return attack
+
+    def instantiate_corruption(self):
+        """Instantiate the common-corruption evaluation condition.
+
+        A sibling of `instantiate_attack`, not a branch of it: a corruption
+        and an attack are consumed by the same evaluation slot but they are
+        different threat models (see `trustfake.corruptions.abc`), so they
+        get separate config groups and a run declares exactly one.
+        """
+        logger.debug("Instantiating corruption")
+        try:
+            corruption = instantiate(self.cfg.corruption)
+        except ConfigAttributeError as e:
+            msg = f"'corruption' attribute is missing in the configuration file: {e}"
+            logger.exception(msg)
+            raise e
+
+        corruption = corruption.get("corruption", None)
+        if corruption is None:
+            msg = (
+                "'corruption' key is missing in the corruption configuration "
+                "file. Please provide a 'corruption' configuration."
+            )
+            logger.error(msg)
+            raise ConfigAttributeError(msg)
+
+        return corruption
 
     def instantiate_optimizer(
         self, model: nn.Module | lightning.LightningModule
@@ -409,6 +441,41 @@ def config_parsing(cfg: DictConfig) -> tuple[DictConfig, DictConfig]:
     instantiator = Instantiator(cfg)
     cfg = instantiator.get_instatiated_cfg()
     return experiment_cfg, cfg
+
+
+def select_evaluation_condition(cfg: dict | DictConfig):
+    """Pick the single evaluation condition a test run reports beside clean.
+
+    An attack and a corruption occupy the same slot in
+    `ClassificationEvaluationModule` but are different threat models -- a
+    worst-case, eps-bounded perturbation against a distributional shift with
+    no budget at all (see `trustfake.corruptions.abc`). The pipe keys its
+    metrics, its confusion matrix and its storage file by the condition's
+    name, so configuring both would not produce two columns: it would
+    quietly report one of them and drop the other. Refusing is the only
+    behaviour that cannot be misread.
+
+    Args:
+        cfg: The instantiated configuration.
+
+    Returns:
+        The attack, the corruption, or None for a clean-only run.
+
+    Raises:
+        ValueError: If both an attack and a corruption are configured.
+    """
+    attack = cfg.get("attack")
+    corruption = cfg.get("corruption")
+    if attack is not None and corruption is not None:
+        msg = (
+            f"Both an attack ('{attack.name}') and a corruption "
+            f"('{corruption.name}') are configured; they are mutually exclusive "
+            "evaluation conditions and one run reports one of them. Pass "
+            "exactly one of '+attack=...' or '+corruption=...'."
+        )
+        logger.error(msg)
+        raise ValueError(msg)
+    return attack if attack is not None else corruption
 
 
 def save_experiment_config(

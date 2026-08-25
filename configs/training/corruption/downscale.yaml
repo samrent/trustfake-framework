@@ -1,0 +1,11 @@
+# The thumbnail round-trip: shrink by `factor`, restore the original size.
+# Destroys high-frequency content irreversibly while leaving semantics
+# intact, which is what separates a detector reading synthesis traces from
+# one reading a resampling signature.
+# Metric prefix / log dir: downscale_<factor> ('.' renders as 'p').
+corruption:
+  _target_: trustfake.corruptions.Downscale
+  # Shrink divisor, >= 1. 2 means "halve, then double".
+  factor: 2
+  clip_min: 0.0
+  clip_max: 1.0

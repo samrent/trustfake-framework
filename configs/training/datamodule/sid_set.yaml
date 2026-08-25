@@ -18,6 +18,20 @@ datamodule:
   image_size: 224
   seed: ${experiment.seed}
   pin_memory: true
+  # GEOMETRY CONTROL (a) -- row filter: none | square | nonsquare | matched
+  # (see trustfake.data.manifest.geometry_selection). SID-Set is
+  # squares-are-fake biased: 'width == height -> fake' scores ~0.98, above a
+  # CLIP probe. Anything but 'none' restricts the calib/test/holdout rows to
+  # a subset where that rule carries no label information -- and changes
+  # what the reported number means, so it belongs in the report. 'matched'
+  # also equalises the class prior, which moves the majority-class floor.
+  geometry_filter: none
+  # GEOMETRY CONTROL (b) -- centre-crop every image to its short side BEFORE
+  # the resize to image_size. Load-bearing order: after the resize every
+  # image is already square, so a crop there would be a silent no-op. Fit
+  # AND evaluate with the same setting or it is a covariate shift, not a
+  # control. Neither control removes the 'short side == 1024' residue.
+  squarecrop: false
   # Optional normalization layer applied to inputs before the model forward
   # pass. Defaults to no-op (nn.Identity) when left null. Uncomment to enable
   # ImageNet normalization, for example:

@@ -1,0 +1,12 @@
+# JPEG re-encoding of the model input (post-resize, ImageNet-C convention --
+# see trustfake.corruptions.abc for why not the original bytes).
+# Not eps-bounded: a corruption is a distributional-shift condition, so it is
+# reported as its own column, never averaged with the adversarial rows.
+# Metric prefix / log dir: jpeg_q<quality>.
+corruption:
+  _target_: trustfake.corruptions.JPEGCompression
+  # libjpeg quality, 1..100. Not a severity index -- report the number.
+  # A typical ladder is 90 / 70 / 40, one run each.
+  quality: 40
+  clip_min: 0.0
+  clip_max: 1.0

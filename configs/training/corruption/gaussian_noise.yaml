@@ -1,0 +1,14 @@
+# Additive i.i.d. Gaussian noise: the ImageNet-C staple that ADDS
+# high-frequency content, which a detector can mistake for synthesis
+# residue. Metric prefix / log dir: gaussian_noise_sigma<sigma>.
+corruption:
+  _target_: trustfake.corruptions.GaussianNoise
+  # Standard deviation in input units (0.05 ~ 13 grey levels).
+  sigma: 0.05
+  # Seed for the condition's own generator -- deliberately NOT
+  # ${experiment.seed}: the reported corruption must not move when the
+  # training seed does, and drawing from the global RNG would make the row
+  # depend on how much randomness the rest of the run consumed first.
+  seed: 0
+  clip_min: 0.0
+  clip_max: 1.0
