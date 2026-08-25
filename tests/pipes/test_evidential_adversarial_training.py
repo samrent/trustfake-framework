@@ -11,7 +11,9 @@ from trustfake.losses import EvidentialLoss
 from trustfake.metrics.uncertainty import EvidentialPredictiveEntropy
 from trustfake.metrics.uncertainty.probs import MultiClassMaxProbability
 from trustfake.models.wrapper import BaseWrapper, EvidentialWrapper
+from trustfake.pipes import ClassificationEvaluationModule
 from trustfake.pipes.train import EvidentialAdversarialTrainingModule
+from trustfake.pydantic.model_output_schema import ClassificationModelOutput
 
 NUM_CLASSES = 3
 
@@ -126,3 +128,36 @@ def test_evat_rejects_non_evidential_loss():
             num_classes=3,
             optimizer=torch.optim.Adam(m.parameters()),
         )
+
+
+def test_evat_checkpoint_loads_into_eval_module(tmp_path):
+    """Regression: the EV-AT training checkpoint must load into the evaluation
+    module. The divergence's IKL global-stat buffers are non-persistent, so
+    they stay out of the checkpoint and do not break the strict state_dict
+    load (the classifier weights are all that eval needs)."""
+    tm = _module(divergence_mode="ikl", adv_steps=2)
+    trainer = L.Trainer(
+        max_epochs=1,
+        accelerator="cpu",
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False,
+        default_root_dir=str(tmp_path),
+        inference_mode=False,
+    )
+    trainer.fit(tm, train_dataloaders=_loader())
+    ckpts = list(tmp_path.rglob("*.ckpt"))
+    assert ckpts, "no checkpoint written"
+
+    fresh_wrapper = _evidential_module()
+    eval_module = ClassificationEvaluationModule.load_from_checkpoint(
+        ckpts[0],
+        model=fresh_wrapper,
+        model_output_schema_cls=ClassificationModelOutput,
+        num_classes=NUM_CLASSES,
+        attack=None,
+    )
+    # the loaded model runs
+    x = torch.rand(4, 3, 8, 8)
+    logits, probs, preds, unc = eval_module.model(x)
+    assert probs.shape == (4, NUM_CLASSES)

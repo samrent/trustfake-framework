@@ -50,10 +50,17 @@ class LogDirichletDivergence(nn.Module):
         self.ema = ema
         self.eps = eps
         # Per-class running mean of the predictive means s (row c = s_bar_c).
+        # Non-persistent: these are a training-time convenience for the IKL
+        # weight, not model weights, so they stay out of the checkpoint (which
+        # would otherwise add keys the evaluation module cannot load).
         self.register_buffer(
-            "class_means", torch.full((num_classes, num_classes), 1.0 / num_classes)
+            "class_means",
+            torch.full((num_classes, num_classes), 1.0 / num_classes),
+            persistent=False,
         )
-        self.register_buffer("stats_ready", torch.zeros((), dtype=torch.bool))
+        self.register_buffer(
+            "stats_ready", torch.zeros((), dtype=torch.bool), persistent=False
+        )
 
     @torch.no_grad()
     def update_global_stats(self, probs: Tensor, targets: Tensor) -> None:

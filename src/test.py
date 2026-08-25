@@ -22,6 +22,7 @@ from trustfake.models.wrapper import (
 )
 from trustfake.pipes import ClassificationEvaluationModule
 from trustfake.pydantic.model_output_schema import ClassificationModelOutput
+from trustfake.utils import resolve_device
 
 logger = get_logger("eval")
 
@@ -138,7 +139,7 @@ def run_eval_pipe(cfg: DictConfig):
             )
         else:
             temperature = calibrate_temperature(
-                eval_module.model, calib_loader(), device=eval_module.device
+                eval_module.model, calib_loader(), device=resolve_device()
             )
             eval_module.model.temperature = temperature
             logger.info(f"Applied fitted temperature T = {temperature:.4f}")
@@ -155,13 +156,12 @@ def run_eval_pipe(cfg: DictConfig):
             import numpy as np
 
             datamodule.setup()
+            device = resolve_device()
             probs_list, targets_list, unc_list = [], [], []
-            eval_module.model.eval()
+            eval_module.model.to(device).eval()
             with torch.no_grad():
                 for inputs, targets in calib_loader():
-                    _, probs, _, uncertainty = eval_module.model(
-                        inputs.to(eval_module.device)
-                    )
+                    _, probs, _, uncertainty = eval_module.model(inputs.to(device))
                     probs_list.append(probs.detach().cpu().numpy())
                     targets_list.append(targets.detach().cpu().numpy())
                     unc_list.append(uncertainty.detach().cpu().numpy())
