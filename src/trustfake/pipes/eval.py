@@ -11,6 +11,7 @@ from torchmetrics.classification import (
 
 from trustfake.attacks import AdversarialAttack
 from trustfake.logging import get_logger
+from trustfake.metrics.calibration import get_calibration_metrics
 from trustfake.metrics.evaluation import (
     get_failure_detection_metrics,
     get_multiclass_classification_metrics,
@@ -80,6 +81,9 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self.selective_classification_metrics.clone(prefix="nat_")
         )
 
+        # Calibration metrics (ECE / NLL / Brier)
+        self.nat_calibration_metrics = self.calibration_metrics.clone(prefix="nat_")
+
         self._storage: dict[str, dict[str, list]] = {
             "nat": {
                 "uncertainties": [],
@@ -98,6 +102,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self.adv_selective_classification_metrics = (
                 self.selective_classification_metrics.clone(prefix=prefix)
             )
+            self.adv_calibration_metrics = self.calibration_metrics.clone(prefix=prefix)
             self._storage[f"{self.attack.name}"] = {
                 "uncertainties": [],
                 "errors": [],
@@ -128,12 +133,14 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         self.nat_roc_curve.to(self.device)
         self.nat_fd_metrics.to(self.device)
         self.nat_selective_classification_metrics.to(self.device)
+        self.nat_calibration_metrics.to(self.device)
         if self.attack is not None:
             self.adv_classification_metrics.to(self.device)
             self.adv_cm.to(self.device)
             self.adv_roc_curve.to(self.device)
             self.adv_fd_metrics.to(self.device)
             self.adv_selective_classification_metrics.to(self.device)
+            self.adv_calibration_metrics.to(self.device)
 
     def _run_model(self, inputs: torch.Tensor):
         logits, probs, preds, uncertainty = self.model(inputs)
@@ -148,6 +155,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         classification_metrics: MetricCollection,
         failure_detection_metrics: MetricCollection,
         selective_classification_metrics: MetricCollection,
+        calibration_metrics: MetricCollection,
         cm: Metric,
         roc_curve: Metric,
         storage_key: str,
@@ -171,6 +179,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         selective_classification_metrics.update(
             output.probs, targets.long(), output.uncertainty
         )
+        calibration_metrics.update(output.probs, targets.long())
 
         # --- Storage for post-hoc analysis ---
         self._storage[storage_key]["uncertainties"].append(
@@ -198,6 +207,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self.nat_classification_metrics,
             self.nat_fd_metrics,
             self.nat_selective_classification_metrics,
+            self.nat_calibration_metrics,
             self.nat_cm,
             self.nat_roc_curve,
             storage_key="nat",
@@ -238,6 +248,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
                 self.adv_classification_metrics,
                 self.adv_fd_metrics,
                 self.adv_selective_classification_metrics,
+                self.adv_calibration_metrics,
                 self.adv_cm,
                 self.adv_roc_curve,
                 storage_key=self.attack.name,
@@ -284,6 +295,9 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         )
         self.log_dict(nat_selective_classification_metrics)
         self.nat_selective_classification_metrics.reset()
+        nat_calibration_metrics = self.nat_calibration_metrics.compute()
+        self.log_dict(nat_calibration_metrics)
+        self.nat_calibration_metrics.reset()
 
         if self.attack is not None:
             adv_classification_metrics = self.adv_classification_metrics.compute()
@@ -308,6 +322,9 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             )
             self.log_dict(adv_selective_classification_metrics)
             self.adv_selective_classification_metrics.reset()
+            adv_calibration_metrics = self.adv_calibration_metrics.compute()
+            self.log_dict(adv_calibration_metrics)
+            self.adv_calibration_metrics.reset()
 
         # Save storage to disk for post-hoc analysis
         self._save_storage_to_disk()
@@ -389,6 +406,16 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             MetricCollection: A collection of metrics to be used for failure detection.
         """
         return get_failure_detection_metrics()
+
+    @property
+    def calibration_metrics(self) -> MetricCollection:
+        """
+        Property that defines the calibration metrics (ECE / NLL / Brier).
+
+        Returns:
+            MetricCollection: A collection of calibration metrics.
+        """
+        return get_calibration_metrics(num_classes=self._num_classes)
 
     @property
     def selective_classification_metrics(self) -> MetricCollection:

@@ -17,6 +17,11 @@ experiment:
 wrapper: base  # base | mc_dropout
 num_samples: 20  # number of stochastic forward passes, used when wrapper: mc_dropout
 
+# Temperature scaling: fit a single T on the calib split (NLL-minimising) and
+# freeze it before scoring, as a calibration baseline. Reported ECE/NLL/Brier
+# reflect the fitted T. Set false to report the raw model (T = 1.0).
+calibrate: true
+
 step: test
 output_dir: ${oc.env:OUTPUT_PATH}/${experiment.name}/${model.name}/s${experiment.seed}
 

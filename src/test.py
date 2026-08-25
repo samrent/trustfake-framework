@@ -8,6 +8,7 @@ from omegaconf import DictConfig
 
 from trustfake.instantiator import config_parsing, save_experiment_config
 from trustfake.logging import add_handler, get_logger
+from trustfake.metrics.calibration import calibrate_temperature
 from trustfake.models.wrapper import BaseWrapper, MCDropoutWrapper
 from trustfake.pipes import ClassificationEvaluationModule
 from trustfake.pydantic.model_output_schema import ClassificationModelOutput
@@ -108,6 +109,26 @@ def run_eval_pipe(cfg: DictConfig):
     except Exception as e:
         logger.exception(f"Error loading model from checkpoint {best_model_path}: {e}")
         raise RuntimeError from e
+
+    # Temperature scaling: fit on the calib split and freeze before scoring.
+    # calib comes from validation shards disjoint from test (see
+    # trustfake.data.manifest), so this cannot touch the reported split.
+    if cfg.get("calibrate", True):
+        datamodule.setup()
+        calib_loader = getattr(datamodule, "calib_dataloader", None)
+        if calib_loader is None:
+            logger.warning(
+                "Datamodule has no calib_dataloader; skipping temperature "
+                "scaling (temperature stays 1.0)."
+            )
+        else:
+            temperature = calibrate_temperature(
+                eval_module.model, calib_loader(), device=eval_module.device
+            )
+            eval_module.model.temperature = temperature
+            logger.info(f"Applied fitted temperature T = {temperature:.4f}")
+    else:
+        logger.info("Calibration disabled (calibrate=false); temperature = 1.0")
 
     logger.info("Starting testing...")
     trainer.test(eval_module, datamodule=datamodule)

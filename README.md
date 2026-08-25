@@ -69,7 +69,7 @@ This trains the model defined in [`configs/training/train_config.yaml`](configs/
 ```bash
 python src/test.py experiment.name=my_experiment
 ```
-This loads the best checkpoint saved by the matching training run (same `experiment.name`, model and seed) and reports classification, failure-detection and selective-classification metrics (AURC/AUGRC/E-AURC as block-size-weighted means over distinct operating points, tie blocks collapsed -- see [`selective_classification.py`](src/trustfake/metrics/evaluation/selective_classification.py) for the convention). Add `+attack=fgsm` to also evaluate robustness under an adversarial attack:
+This loads the best checkpoint saved by the matching training run (same `experiment.name`, model and seed) and reports classification, failure-detection, selective-classification and calibration metrics (AURC/AUGRC/E-AURC as block-size-weighted means over distinct operating points, tie blocks collapsed -- see [`selective_classification.py`](src/trustfake/metrics/evaluation/selective_classification.py) for the convention). Add `+attack=fgsm` to also evaluate robustness under an adversarial attack:
 ```bash
 python src/test.py experiment.name=my_experiment +attack=fgsm
 ```
@@ -83,6 +83,21 @@ Splits are governed by a shard-level manifest ([`src/trustfake/data/manifest.py`
 The official SID-Set test split is withheld by the dataset authors; everything called "test" here is carved from the validation split. Reports must say so (`trustfake.data.SPLIT_PROVENANCE`).
 
 The datamodule reads the parquet shards directly from `${DATA_PATH}/sid_set` -- fetch them with [`jobs/download_sidset.sh`](jobs/download_sidset.sh).
+
+### Calibration
+
+Temperature scaling is fitted on the `calib` split (NLL-minimising, one scalar
+`T`) and frozen before scoring, as the calibration baseline the harness
+benchmarks against. `calib` comes from validation shards disjoint from `test`,
+so this cannot touch the reported split. Reported **ECE / NLL / Brier** (clean
+and adversarial) reflect the fitted `T`; disable with `calibrate=false` to
+report the raw model.
+
+`T > 0` cannot change the argmax, so accuracy is untouched -- but unlike a
+2-class model (where MSP is monotone in the single logit margin and temperature
+cannot reorder samples), with three classes temperature *can* change the
+confidence ranking. Calibration is therefore a live variable here, which is
+what makes it a meaningful baseline for a selective-classification method.
 
 ### Jupyter notebooks
 

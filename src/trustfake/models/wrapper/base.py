@@ -25,7 +25,7 @@ class BaseWrapper(TrustFakeWrapper):
         self.uncertainty_score = self.uncertainty_score.to(x.device)
         x = self.normalization_layer(x)
         logits = self.model(x)
-        probs = torch.softmax(logits, dim=1)
+        probs = torch.softmax(logits / self.temperature, dim=1)
         preds = torch.argmax(probs, dim=1)
 
         uncertainty = self.uncertainty_score(probs)
@@ -42,7 +42,7 @@ class BaseWrapper(TrustFakeWrapper):
         this wrapper can offer it and a stochastic one cannot.
         """
         self.uncertainty_score = self.uncertainty_score.to(logits.device)
-        probs = torch.softmax(logits, dim=1)
+        probs = torch.softmax(logits / self.temperature, dim=1)
         preds = torch.argmax(probs, dim=1)
         uncertainty = self.uncertainty_score(probs)
         self.uncertainty_score.reset()

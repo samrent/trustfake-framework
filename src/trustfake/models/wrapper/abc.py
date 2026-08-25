@@ -25,6 +25,8 @@ class TrustFakeWrapper(ABC, pl.LightningModule):
         loss_fn (nn.Module | None): The loss function to be used during training.
         uncertainty_score (Metric): The metric to be used
             for uncertainty quantification.
+        temperature (float): Post-hoc temperature applied to logits before
+            softmax when computing probs/preds/uncertainty. 1.0 is a no-op.
     """
 
     def __init__(
@@ -33,12 +35,20 @@ class TrustFakeWrapper(ABC, pl.LightningModule):
         model: nn.Module,
         loss_fn: nn.Module | None,
         uncertainty_score: Metric,
+        temperature: float = 1.0,
     ):
         super().__init__()
         self.normalization_layer = normalization_layer
         self.model = model
         self.loss_fn = loss_fn
         self.uncertainty_score = uncertainty_score
+        # Temperature scaling of the probabilities (a post-hoc calibration
+        # fitted on the calib split; see trustfake.metrics.calibration). The
+        # returned logits stay raw -- attacks and the loss act on the model,
+        # not on its calibrated probabilities -- while probs, preds and
+        # uncertainty are computed from logits / temperature. T > 0 is
+        # monotone, so preds and accuracy are unchanged by it.
+        self.temperature = temperature
 
     @abstractmethod
     def forward(
