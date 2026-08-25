@@ -11,6 +11,7 @@ __all__ = ["visualize_sample"]
 _SPLIT_TO_DATASET_ATTR = {
     "train": "train_dataset",
     "val": "val_dataset",
+    "calib": "calib_dataset",
     "test": "test_dataset",
 }
 

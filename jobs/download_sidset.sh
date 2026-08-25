@@ -41,9 +41,17 @@ echo -n "This run started on: "
 date
 
 python -c "
-from datasets import load_dataset
+from huggingface_hub import snapshot_download
 
-load_dataset('saberzl/SID_Set', cache_dir='$TARGET_DIR')
+# The datamodule reads the parquet shards directly (shard-level split
+# manifest), so fetch the shards themselves rather than the arrow cache.
+snapshot_download(
+    repo_id='saberzl/SID_Set',
+    repo_type='dataset',
+    allow_patterns=['data/train-*.parquet', 'data/validation-*.parquet'],
+    local_dir='$TARGET_DIR',
+    max_workers=4,
+)
 "
 
 echo -n "This run completed on: "
