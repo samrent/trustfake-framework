@@ -31,6 +31,9 @@ __all__ = [
 WRAPPER_UNCERTAINTY_SCORE_TARGETS: dict[str, str] = {
     "base": "trustfake.metrics.uncertainty.probs.MultiClassMaxProbability",
     "mc_dropout": "trustfake.metrics.uncertainty.mc_dropout.MCDropoutPredictiveEntropy",
+    "evidential": (
+        "trustfake.metrics.uncertainty.evidential.EvidentialPredictiveEntropy"
+    ),
 }
 
 

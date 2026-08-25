@@ -9,7 +9,11 @@ from omegaconf import DictConfig
 from trustfake.instantiator import config_parsing, save_experiment_config
 from trustfake.logging import add_handler, get_logger
 from trustfake.metrics.calibration import calibrate_temperature
-from trustfake.models.wrapper import BaseWrapper, MCDropoutWrapper
+from trustfake.models.wrapper import (
+    BaseWrapper,
+    EvidentialWrapper,
+    MCDropoutWrapper,
+)
 from trustfake.pipes import ClassificationEvaluationModule
 from trustfake.pydantic.model_output_schema import ClassificationModelOutput
 
@@ -18,6 +22,7 @@ logger = get_logger("eval")
 WRAPPERS = {
     "base": BaseWrapper,
     "mc_dropout": MCDropoutWrapper,
+    "evidential": EvidentialWrapper,
 }
 
 
@@ -89,6 +94,10 @@ def run_eval_pipe(cfg: DictConfig):
     wrapper_kwargs = {}
     if wrapper_cls is MCDropoutWrapper:
         wrapper_kwargs["num_samples"] = cfg.get("num_samples", 20)
+    if wrapper_cls is EvidentialWrapper:
+        wrapper_kwargs["evidence_activation"] = cfg.get(
+            "evidence_activation", "softplus"
+        )
 
     # PyTorch model
     module_best = wrapper_cls(

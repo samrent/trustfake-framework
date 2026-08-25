@@ -13,7 +13,11 @@ from trustfake.instantiator import (
     save_experiment_config,
 )
 from trustfake.logging import add_handler, get_logger
-from trustfake.models.wrapper import BaseWrapper, MCDropoutWrapper
+from trustfake.models.wrapper import (
+    BaseWrapper,
+    EvidentialWrapper,
+    MCDropoutWrapper,
+)
 from trustfake.pipes.train import StandardTrainingModule
 
 logger = get_logger("training-pipe")
@@ -21,6 +25,7 @@ logger = get_logger("training-pipe")
 WRAPPERS = {
     "base": BaseWrapper,
     "mc_dropout": MCDropoutWrapper,
+    "evidential": EvidentialWrapper,
 }
 
 
@@ -74,6 +79,10 @@ def run_train_pipe(cfg: DictConfig) -> None:
     wrapper_kwargs = {}
     if wrapper_cls is MCDropoutWrapper:
         wrapper_kwargs["num_samples"] = cfg.get("num_samples", 20)
+    if wrapper_cls is EvidentialWrapper:
+        wrapper_kwargs["evidence_activation"] = cfg.get(
+            "evidence_activation", "softplus"
+        )
 
     module = wrapper_cls(
         normalization_layer=datamodule.normalization_layer,
