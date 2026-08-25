@@ -16,16 +16,33 @@ import copy
 import pytest
 import torch
 
-from trustfake.attacks import ACE, FGSM, UncertaintyFGSM
+from trustfake.attacks import (
+    ACE,
+    BIM,
+    FGSM,
+    PGD,
+    CarliniWagner,
+    DeepFool,
+    ParamACE,
+    UncertaintyFGSM,
+)
 
 EPS = 0.05
 CLIP_MIN, CLIP_MAX = 0.0, 1.0
 
-# Add new attacks here to get them covered by every test below.
+# Native, deterministic attacks: every one gets the full contract battery.
+# The autoattack-package wrappers (APGD/FAB/Square/AutoAttack) are slower and
+# tested separately in test_autoattack_wrappers.py. For the two min-norm
+# attacks (DeepFool, C&W) eps is an L2 cap, which also satisfies L_inf <= eps.
 ATTACKS = [
     FGSM(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     UncertaintyFGSM(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     ACE(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    ParamACE(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    PGD(eps=EPS, steps=5, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    BIM(eps=EPS, steps=5, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    DeepFool(eps=EPS, steps=20, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    CarliniWagner(eps=EPS, steps=30, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
 ]
 
 ATTACK_IDS = [attack.name for attack in ATTACKS]
@@ -113,8 +130,17 @@ def test_perturbation_is_nonzero(attack, model, inputs, targets):
 
 @pytest.mark.parametrize(
     "attack_cls",
-    [FGSM, UncertaintyFGSM, ACE],
-    ids=["fgsm", "uncertainty_fgsm", "ace"],
+    [FGSM, UncertaintyFGSM, ACE, ParamACE, PGD, BIM, DeepFool, CarliniWagner],
+    ids=[
+        "fgsm",
+        "uncertainty_fgsm",
+        "ace",
+        "param_ace",
+        "pgd",
+        "bim",
+        "deepfool",
+        "cw",
+    ],
 )
 def test_zero_epsilon_returns_input_unchanged(attack_cls, model, inputs, targets):
     zero_eps_attack = attack_cls(eps=0.0, clip_min=CLIP_MIN, clip_max=CLIP_MAX)

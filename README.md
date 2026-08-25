@@ -138,6 +138,43 @@ uv run pytest tests/attacks -v
 ```
 These checks catch the common ways an attack implementation goes wrong, but are not a substitute for attack-specific tests (e.g. checking that FGSM actually moves in the sign-of-gradient direction).
 
+### Available attacks
+
+Selected with `+attack=<name>` when running `src/test.py`. Two families: a
+**confidence-targeted** attack collapses selective risk while leaving accuracy
+untouched (label preservation is a constraint), whereas a
+**prediction-targeted** attack collapses it as a side effect of destroying
+accuracy. `eps` is an L∞ budget except for the minimum-norm attacks
+(DeepFool, C&W, FAB), where it is a cap on the result's norm; those are noted.
+
+| name | family | reference | notes |
+|---|---|---|---|
+| `fgsm` | prediction | Goodfellow et al. 2015 | single step |
+| `bim` | prediction | Kurakin et al. 2017 | iterative, no random start |
+| `pgd` | prediction | Madry et al. 2018 | random start, seeded |
+| `deepfool` | prediction | Moosavi-Dezfooli et al. 2016 | min-norm; `eps` is an L2 cap |
+| `cw` | prediction | Carlini & Wagner 2017 | L2; `eps` is an L2 cap |
+| `apgd` | prediction | Croce & Hein 2020 | via `autoattack` |
+| `fab` | prediction | Croce & Hein 2020 | min-norm; via `autoattack` |
+| `square` | prediction | Andriushchenko et al. 2020 | query-based; via `autoattack` |
+| `autoattack` | prediction | Croce & Hein 2020 | ensemble; class-count-safe composition |
+| `uncertainty_fgsm` | confidence | Disrupting Deep Uncertainty Estimation | label-free; attacks the uncertainty score |
+| `ace` | confidence | Galil & El-Yaniv 2021 | per-sample eps search, accept test |
+| `param_ace` | confidence | Buerger et al. 2024 (arXiv:2405.13922) | (η,ω)-ACE family |
+
+The `autoattack`-package wrappers drive the model through a logits adapter and
+seed their randomised components for determinism; the ensemble excludes the
+targeted stages, which read 3rd/4th-largest logits and cannot run on a
+few-class detector (see the wrapper docstring). Attacks with an accept test or
+a min-norm search return an `AttackResult` carrying the per-sample effective
+epsilon and the accept-check logits, which the evaluation pipe scores directly.
+
+Not yet ported (each needs a separate, non-PyPI research repository or a new
+heavyweight dependency, so none could be vendored and verified offline here):
+**A³** (adaptive AutoAttack), **TR** (trust-region), **PDPGD**, and **BB**
+(Brendel & Bethge, via foolbox). Adding any of them is a dependency decision
+worth taking deliberately.
+
 ## Baselines
 
 Pretrained baseline results are available [here](https://transfer.multitel.be/index.php/s/FrcitTqbe9Z48wG). Download the `out` folder and place it in the root directory of the project.

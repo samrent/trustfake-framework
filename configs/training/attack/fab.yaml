@@ -1,0 +1,9 @@
+# Fast Adaptive Boundary attack (Croce & Hein, ICML 2020), via autoattack.
+# Minimum-norm; eps bounds the reported perturbation.
+attack:
+  _target_: trustfake.attacks.FAB
+  eps: 0.03137  # 8/255
+  n_iter: 100
+  seed: 0
+  clip_min: 0.0
+  clip_max: 1.0

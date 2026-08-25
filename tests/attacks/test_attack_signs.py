@@ -13,7 +13,16 @@ import torch
 import torch.nn as nn
 from torchmetrics.classification import BinaryAUROC
 
-from trustfake.attacks import ACE, FGSM, UncertaintyFGSM
+from trustfake.attacks import (
+    ACE,
+    BIM,
+    FGSM,
+    PGD,
+    CarliniWagner,
+    DeepFool,
+    ParamACE,
+    UncertaintyFGSM,
+)
 from trustfake.metrics.evaluation.selective_classification import aurc_from_scores
 from trustfake.metrics.uncertainty.probs import MultiClassMaxProbability
 from trustfake.models.wrapper import BaseWrapper
@@ -139,3 +148,52 @@ def test_ace_signs(fitted):
     aurc_clean = aurc_from_scores(unc_clean.numpy(), errors.numpy())
     aurc_adv = aurc_from_scores(unc_adv.numpy(), errors.numpy())
     assert aurc_adv > aurc_clean
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        PGD(eps=0.1, steps=10),
+        BIM(eps=0.1, steps=10),
+        DeepFool(eps=2.0, steps=50),
+        CarliniWagner(eps=2.0, c=5.0, steps=60),
+    ],
+    ids=["pgd", "bim", "deepfool", "cw"],
+)
+def test_prediction_attacks_move_accuracy_down(attack, fitted):
+    """The prediction family's defining sign: accuracy drops. A prediction
+    attack that does not move accuracy is silently broken -- most often the
+    gradient was taken through a detached tensor. eps is generous here so the
+    sign is unambiguous on a small fixture (DeepFool/C&W use an L2 cap)."""
+    model, x, y, preds_clean, _ = fitted
+    adv = attack(model, x, y)
+    preds_adv, _ = _scores(model, adv)
+    acc_clean = (preds_clean == y).float().mean().item()
+    acc_adv = (preds_adv == y).float().mean().item()
+    assert acc_adv < acc_clean
+
+
+@pytest.mark.parametrize("eta", [1, -1], ids=["lower_conf", "raise_conf"])
+def test_param_ace_preserves_argmax_and_moves_confidence(eta, fitted):
+    """(eta, omega)-ACE holds F(x+gamma) = F(x) as a constraint, so the argmax
+    is preserved for every sample; eta=+1 lowers mean confidence in the
+    prediction, eta=-1 raises it. omega='pred' needs no labels."""
+    model, x, y, preds_clean, _ = fitted
+    result = ParamACE(eps=0.05, eta=eta, omega="pred", steps=15).run(model, x)
+
+    assert torch.equal(result.accepted_logits.argmax(dim=1), preds_clean)
+
+    conf_clean = model(x)[1].detach().gather(1, preds_clean[:, None]).squeeze(1)
+    conf_adv = (
+        result.accepted_logits.softmax(dim=1).gather(1, preds_clean[:, None]).squeeze(1)
+    )
+    if eta == 1:
+        assert conf_adv.mean().item() < conf_clean.mean().item()
+    else:
+        assert conf_adv.mean().item() > conf_clean.mean().item()
+
+
+def test_param_ace_true_omega_requires_labels(fitted):
+    model, x, y, _, _ = fitted
+    with pytest.raises(ValueError, match="requires ground-truth"):
+        ParamACE(eps=0.05, omega="true").run(model, x, targets=None)

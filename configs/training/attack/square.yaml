@@ -1,0 +1,9 @@
+# Square Attack (Andriushchenko et al., ECCV 2020), via autoattack.
+# Query-based, gradient-free, L_inf.
+attack:
+  _target_: trustfake.attacks.SquareAttack
+  eps: 0.03137  # 8/255
+  n_queries: 5000
+  seed: 0
+  clip_min: 0.0
+  clip_max: 1.0

@@ -1,0 +1,9 @@
+# DeepFool (Moosavi-Dezfooli et al., CVPR 2016). Minimum-norm; eps is an L2
+# radius the result is capped to (which also satisfies L_inf <= eps).
+attack:
+  _target_: trustfake.attacks.DeepFool
+  eps: 0.5
+  steps: 50
+  overshoot: 1.02
+  clip_min: 0.0
+  clip_max: 1.0

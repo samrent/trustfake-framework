@@ -1,0 +1,11 @@
+# AutoAttack ensemble (Croce & Hein, ICML 2020), via autoattack. Composed as
+# apgd-ce + fab + square so it runs on any class count (see the wrapper
+# docstring for the binary-detector gotcha with the targeted stages).
+attack:
+  _target_: trustfake.attacks.AutoAttackLinf
+  eps: 0.03137  # 8/255
+  n_iter: 100
+  n_queries: 5000
+  seed: 0
+  clip_min: 0.0
+  clip_max: 1.0

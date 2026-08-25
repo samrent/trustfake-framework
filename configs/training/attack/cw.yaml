@@ -1,0 +1,10 @@
+# Carlini & Wagner L2 (IEEE S&P 2017). eps is an L2 cap on the result.
+attack:
+  _target_: trustfake.attacks.CarliniWagner
+  eps: 0.5
+  c: 1.0
+  kappa: 0.0
+  steps: 50
+  lr: 0.01
+  clip_min: 0.0
+  clip_max: 1.0
