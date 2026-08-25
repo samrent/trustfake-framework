@@ -19,9 +19,17 @@ number is printed:
         leaves 7 bins empty in the binary case and the resulting number is
         not comparable to a multiclass ECE computed the same way.
 
-ECE is also biased upward by binning, and the bias grows with the bin count:
-a perfectly calibrated binary model measures ~0.0056 at 5 bins, ~0.0102 at
-15 and ~0.0573 at 200. Report NLL and Brier next to it.
+ECE is also biased upward by binning. The bias grows with the bin count and
+shrinks with the sample size, so a figure quoted without n means nothing. A
+perfectly calibrated binary model (confidence uniform on [0.5, 1], mean over
+20 draws) measures:
+
+    n =  2,000:  0.0135 at 5 bins,  0.0214 at 15,  0.0711 at 200
+    n = 20,000:  0.0039 at 5 bins,  0.0063 at 15,  0.0222 at 200
+
+So an ECE of 0.02 at 15 bins on 2,000 rows is indistinguishable from perfect
+calibration. Compare ECE only across runs sharing both n and the bin count,
+and report NLL and Brier next to it -- neither is binned.
 """
 
 from __future__ import annotations
@@ -58,6 +66,9 @@ def ece_from_scores(
         scheme: ``"equal_width"`` (uniform edges over ``domain``) or
             ``"equal_mass"`` (quantile edges, equal counts per bin).
         domain: Bounds of the equal-width grid; ignored for equal mass.
+            Rows outside it are CLIPPED into the edge bins -- neither dropped
+            nor reweighted -- so a restricted domain folds the tail below it
+            into bin 0 rather than excluding it.
         norm: ``"l1"`` is the mass-weighted mean gap (the usual ECE),
             ``"l2"`` its root-mean-square, ``"max"`` the largest gap over
             bins (MCE), which is a worst-bin statistic and not an average.
@@ -67,6 +78,18 @@ def ece_from_scores(
 
     Raises:
         ValueError: If ``scheme`` or ``norm`` is not one of the above.
+
+    Note:
+        The binning follows torchmetrics' ``_binning_bucketize`` exactly, so
+        the equal-width default is comparable with the ``ece`` this module
+        also reports from ``MulticlassCalibrationError``. Two details do the
+        work and both were wrong here before: bins are left-open
+        ``(e_i, e_{i+1}]``, and confidence of exactly 1.0 gets a bin of its
+        OWN beyond the grid. Folding that bin into the last regular one is
+        not a rounding difference -- on a saturated fp32 softmax, where a
+        large share of rows sit at exactly 1.0, it understated ECE by 26x on
+        the audit's fixture. Reporting two binning conventions under one
+        heading is the failure this note exists to prevent.
     """
     conf = np.asarray(confidence, dtype=np.float64).ravel()
     acc = np.asarray(correct, dtype=np.float64).ravel()
@@ -83,9 +106,15 @@ def ece_from_scores(
     if norm not in ("l1", "l2", "max"):
         raise ValueError("norm must be 'l1', 'l2' or 'max'")
 
-    idx = np.clip(np.digitize(conf, edges[1:-1], right=False), 0, n_bins - 1)
+    # `searchsorted(..., side="right") - 1` is exactly torch.bucketize(...,
+    # right=True) - 1, which is what torchmetrics uses. It makes bins
+    # left-open and gives confidence == domain[1] an index one past the grid,
+    # hence the n_bins + 1 slots. For equal mass the outer edges are infinite,
+    # so the extra slot simply stays empty.
+    n_slots = n_bins + 1
+    idx = np.clip(np.searchsorted(edges, conf, side="right") - 1, 0, n_slots - 1)
     gaps, props = [], []
-    for b in range(n_bins):
+    for b in range(n_slots):
         in_bin = idx == b
         count = int(in_bin.sum())
         if count:

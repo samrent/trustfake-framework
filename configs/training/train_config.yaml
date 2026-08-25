@@ -65,8 +65,20 @@ awp_warmup_epochs: 0
 # least robust epoch that happened to fit the clean split best. Set this > 0
 # to also compute `val_robust_accuracy` (one PGD run per validation batch),
 # then set selection_metric: val_robust_accuracy so the callbacks use it.
+# Available on EVERY pipe, so arms and baselines can be selected alike.
 robust_val_steps: 0
+# L_inf budget of that validation attack. null falls back to the arm's own
+# adv_eps. Deliberately NOT the warm-up ramp: a metric whose attack
+# strengthens each epoch is not comparable across the epochs it is selecting
+# between, and a max-mode checkpoint would just keep the first one.
+robust_val_eps: null
+
+# What the checkpoint and early-stopping callbacks monitor, and in which
+# direction. selection_mode MUST match the metric: val_f1_score and
+# val_robust_accuracy are max, val_aurc / val_augrc / val_eaurc / val_loss
+# are min. Getting it wrong keeps the worst epoch and says nothing.
 selection_metric: val_f1_score
+selection_mode: max
 
 step: fit
 output_dir: ${oc.env:OUTPUT_PATH}/${experiment.name}/${model.name}/s${experiment.seed}

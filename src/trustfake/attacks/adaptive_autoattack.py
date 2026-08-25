@@ -44,17 +44,31 @@ class AdaptiveAutoAttack(AdversarialAttack):
     genuinely robust samples, which are the only ones whose robustness is in
     question.
 
-    The inner attack ascends the negative logit margin with an APGD-style
-    adaptive step (momentum, halving the step at checkpoints where progress
-    stalls, restarting from the best point). It uses the margin rather than
-    AutoAttack's DLR loss deliberately: DLR reads the third-largest logit and
-    is undefined on a 3-class detector -- the same constraint the
-    `autoattack` wrappers document for their targeted stages.
+    The budget that is conserved is COST, not iteration count -- `steps` is
+    read as ``steps`` iterations per sample on the full batch, i.e. a total
+    of ``steps * B`` sample-iterations, and each round takes an equal share
+    of what is left divided by however many samples are still active. Split
+    the iteration count evenly instead and OSD does nothing at all: the
+    active set falls away while `steps_allocated` sits at the same number
+    every round, the freed budget is simply not spent, and the attack is
+    weaker than its own docstring on exactly the samples it was supposed to
+    concentrate on -- which shows up as robustness, not as an error.
+
+    The inner attack descends the logit margin with an APGD-style adaptive
+    step (momentum, halving the step at checkpoints where progress stalls,
+    restarting from the best point), using Croce & Hein's two halving
+    conditions -- see :meth:`_apgd` for what is and is not ported. It uses
+    the margin rather than AutoAttack's DLR loss deliberately: DLR reads the
+    third-largest logit and is undefined on a 3-class detector -- the same
+    constraint the `autoattack` wrappers document for their targeted stages.
 
     Args:
         eps: L_inf budget.
-        steps: Total inner iterations across all rounds. OSD redistributes
-            them; it does not add to them.
+        steps: Inner iterations PER SAMPLE across all rounds, i.e. a total
+            cost of ``steps * batch`` sample-iterations. OSD redistributes
+            that total onto the still-unsolved samples; it does not add to
+            it, so a round on a quarter of the batch runs roughly four times
+            as many iterations at the same cost.
         rounds: ADI/OSD rounds. Each re-initialises the still-unsolved
             samples from the candidate set, now including transfer
             directions.
@@ -133,6 +147,40 @@ class AdaptiveAutoAttack(AdversarialAttack):
             best_margin = torch.where(take, margin, best_margin)
         return best
 
+    @staticmethod
+    def _should_halve(
+        improved_count: torch.Tensor,
+        window: int,
+        eta: torch.Tensor,
+        eta_at_checkpoint: torch.Tensor,
+        best_margin: torch.Tensor,
+        best_at_checkpoint: torch.Tensor,
+        rho: float = 0.75,
+    ) -> torch.Tensor:
+        r"""Croce & Hein's checkpoint condition, per sample.
+
+        Halve the step size when EITHER holds:
+
+        1. fewer than ``rho`` of the window's iterations improved on the
+           previous iterate -- the search is not making progress at this
+           step size;
+        2. the step size and the best value are both unchanged since the
+           previous checkpoint -- the window achieved nothing at all and was
+           not already slowed down for it, which is what oscillation across
+           the boundary looks like.
+
+        Condition 2 is not redundant: a window can improve on the previous
+        iterate often enough to clear condition 1 while never improving the
+        best value, which is exactly a step size large enough to keep
+        overshooting.
+
+        `improved_count` must be counted against the PREVIOUS ITERATE, not
+        against the running best. See :meth:`_apgd`.
+        """
+        no_progress = improved_count < rho * window
+        frozen = (eta == eta_at_checkpoint) & (best_margin == best_at_checkpoint)
+        return no_progress | frozen
+
     def _apgd(
         self,
         model: TrustFakeWrapper,
@@ -141,19 +189,61 @@ class AdaptiveAutoAttack(AdversarialAttack):
         delta: torch.Tensor,
         steps: int,
     ) -> torch.Tensor:
-        """APGD-style descent on the logit margin. Returns the best delta."""
+        r"""APGD descent on the logit margin (Croce & Hein 2020, Alg. 1).
+
+        Returns the best delta.
+
+        The step size halves at a checkpoint when EITHER of the paper's two
+        conditions holds:
+
+        1. fewer than ``rho = 0.75`` of the iterations in the window improved
+           on the PREVIOUS iterate, or
+        2. the step size and the best value are both unchanged since the
+           previous checkpoint (the window made no progress at all and the
+           step was not already reduced for it).
+
+        Condition 1 counts improvement over the previous iterate, not over
+        the running best. Counting against the running best is a strictly
+        harder bar -- once a good point is found, later iterates rarely beat
+        it even while the search is moving productively -- so that counter
+        reads low and the step halves early and repeatedly, freezing the
+        attack short of the boundary. That yields a smaller flip rate, which
+        is indistinguishable from a robust model.
+
+        Deviations from the paper, stated rather than glossed: the loss is
+        the logit margin, not DLR (see the class docstring); checkpoints are
+        a fixed ``steps // 4`` apart rather than the paper's decreasing
+        ``p_j`` schedule, which keeps the per-round cost predictable now that
+        OSD varies ``steps`` per round; and there is no restart from the best
+        point other than the one the halving rule performs.
+        """
         if steps <= 0 or self.eps <= 0:
             return delta
 
+        rho = 0.75
         expand = (-1,) + (1,) * (inputs.ndim - 1)
-        eta = torch.full((inputs.shape[0],), 2.0 * self.eps, device=inputs.device)
+        eta = torch.full(
+            (inputs.shape[0],),
+            2.0 * self.eps,
+            device=inputs.device,
+            dtype=inputs.dtype,
+        )
 
         x_prev = self._clamp(inputs + delta)
         x_cur = x_prev.clone()
         best = x_cur.clone()
         best_margin = self._margin(model, x_cur, preds)
+        # Margin at the CURRENT iterate: condition 1 is measured against this,
+        # not against `best_margin`.
+        cur_margin = best_margin.clone()
         # Progress counter per checkpoint window, for the halving rule.
-        improved_count = torch.zeros(inputs.shape[0], device=inputs.device)
+        improved_count = torch.zeros(
+            inputs.shape[0], device=inputs.device, dtype=inputs.dtype
+        )
+        # Step size and best value as of the previous checkpoint, for
+        # condition 2.
+        eta_at_checkpoint = eta.clone()
+        best_at_checkpoint = best_margin.clone()
         window = max(1, steps // 4)
 
         for step in range(steps):
@@ -172,21 +262,37 @@ class AdaptiveAutoAttack(AdversarialAttack):
             x_next = self._clamp(project_linf(x_cur + momentum_step, inputs, self.eps))
 
             new_margin = self._margin(model, x_next, preds)
+            # Condition 1's counter: improvement over the PREVIOUS iterate.
+            improved_count += (new_margin < cur_margin).to(improved_count.dtype)
+
             better = new_margin < best_margin
             best = torch.where(better.view(expand), x_next, best)
             best_margin = torch.where(better, new_margin, best_margin)
-            improved_count += better.float()
 
             x_prev, x_cur = x_cur, x_next
+            cur_margin = new_margin
 
             # Checkpoint: where the window bought little, halve the step and
             # restart from the best point found so far.
             if (step + 1) % window == 0:
-                stalled = improved_count < 0.75 * window
+                stalled = self._should_halve(
+                    improved_count,
+                    window,
+                    eta,
+                    eta_at_checkpoint,
+                    best_margin,
+                    best_at_checkpoint,
+                    rho,
+                )
                 eta = torch.where(stalled, eta * 0.5, eta)
                 x_cur = torch.where(stalled.view(expand), best, x_cur)
                 x_prev = x_cur.clone()
+                # Restarting moved the current iterate, so the reference for
+                # the next window's condition 1 moves with it.
+                cur_margin = torch.where(stalled, best_margin, cur_margin)
                 improved_count = torch.zeros_like(improved_count)
+                eta_at_checkpoint = eta.clone()
+                best_at_checkpoint = best_margin.clone()
 
         return (best - inputs).detach()
 
@@ -204,11 +310,12 @@ class AdaptiveAutoAttack(AdversarialAttack):
         preds = preds.detach()
 
         gen = torch.Generator(device=inputs.device).manual_seed(self.seed)
-        expand = (-1,) + (1,) * (inputs.ndim - 1)
 
         delta = torch.zeros_like(inputs)
         solved = torch.zeros(inputs.shape[0], dtype=torch.bool, device=inputs.device)
         transfer: list[torch.Tensor] = []
+        # Budget in sample-iterations, so it can be moved between samples.
+        budget = self.steps * inputs.shape[0]
         spent = 0
 
         for round_idx in range(self.rounds):
@@ -216,11 +323,18 @@ class AdaptiveAutoAttack(AdversarialAttack):
             if active.numel() == 0:
                 break
 
-            # OSD: the remaining budget is split over the remaining rounds,
-            # so each round runs longer as the active set shrinks.
+            # OSD: the remaining COST is split over the remaining rounds and
+            # then divided by however many samples are still active, so a
+            # round on a smaller active set runs proportionally longer for
+            # the same number of forward/backward passes. Dividing the
+            # iteration count instead (rather than the cost) leaves the
+            # freed budget unspent -- the discarding happens, the
+            # redistribution does not.
             remaining_rounds = self.rounds - round_idx
-            round_steps = max(1, (self.steps - spent) // remaining_rounds)
-            spent += round_steps
+            round_steps = max(
+                1, (budget - spent) // (remaining_rounds * active.numel())
+            )
+            spent += round_steps * active.numel()
 
             sub_inputs = inputs[active]
             sub_preds = preds[active]
@@ -237,14 +351,13 @@ class AdaptiveAutoAttack(AdversarialAttack):
             # Feed the round's successes forward as ADI transfer directions.
             won = solved[active]
             if won.any() and round_idx + 1 < self.rounds:
-                direction = torch.zeros_like(delta)
-                direction[active] = torch.where(
-                    won.view(expand), sub_delta, torch.zeros_like(sub_delta)
-                )
                 # A single batch-wide direction: the mean successful
                 # perturbation, plus its sign pattern, which is what
-                # transfers between samples.
-                mean_delta = direction[active][won].mean(dim=0, keepdim=True)
+                # transfers between samples. Only the winners contribute, so
+                # select them directly -- zeroing the losers in a
+                # batch-shaped temporary and then indexing the winners out of
+                # it is the same tensor by a longer route.
+                mean_delta = sub_delta[won].mean(dim=0, keepdim=True)
                 transfer = [
                     mean_delta.expand_as(inputs).clone(),
                     (self.eps * mean_delta.sign()).expand_as(inputs).clone(),

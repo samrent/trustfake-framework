@@ -24,7 +24,12 @@ from __future__ import annotations
 
 import torch
 
-from trustfake.attacks._common import class_margin, model_logits, project_l2
+from trustfake.attacks._common import (
+    class_margin,
+    finalise_minimum_norm,
+    model_logits,
+    project_l2,
+)
 from trustfake.attacks.abc import AdversarialAttack, AttackResult
 from trustfake.models.wrapper import TrustFakeWrapper
 
@@ -63,7 +68,11 @@ class BrendelBethge(AdversarialAttack):
     framework's L_inf contract. Report that ``eps`` is an L2 radius here.
     ``AttackResult.effective_eps`` is the L_inf actually applied, as
     everywhere else in the suite; ``l2_norm`` on the result carries the
-    quantity the attack actually minimises.
+    quantity the attack actually minimises. A sample that cannot be flipped
+    inside the cap -- no adversarial start, or a walk the cap undoes --
+    comes back UNPERTURBED with ``success=False`` and ``l2_norm == 0``,
+    matching the other three min-norm attacks: a capped failure reporting
+    ``l2_norm == eps`` reads exactly like a genuine eps-cost break.
 
     Deterministic: the random starting points come from a per-call seeded
     generator.
@@ -149,7 +158,9 @@ class BrendelBethge(AdversarialAttack):
 
         start = inputs.clone()
         found = torch.zeros(inputs.shape[0], dtype=torch.bool, device=inputs.device)
-        best_dist = torch.full((inputs.shape[0],), float("inf"), device=inputs.device)
+        best_dist = torch.full(
+            (inputs.shape[0],), float("inf"), device=inputs.device, dtype=inputs.dtype
+        )
 
         for candidate in candidates:
             with torch.no_grad():
@@ -159,8 +170,8 @@ class BrendelBethge(AdversarialAttack):
 
             # Bisect along [x_0, candidate] for the smallest step that is
             # still adversarial: `hi` is always adversarial, `lo` never is.
-            lo = torch.zeros(inputs.shape[0], device=inputs.device)
-            hi = torch.ones(inputs.shape[0], device=inputs.device)
+            lo = torch.zeros(inputs.shape[0], device=inputs.device, dtype=inputs.dtype)
+            hi = torch.ones(inputs.shape[0], device=inputs.device, dtype=inputs.dtype)
             expand = (-1,) + (1,) * (inputs.ndim - 1)
             for _ in range(self.init_search_steps):
                 mid = (lo + hi) / 2
@@ -232,6 +243,7 @@ class BrendelBethge(AdversarialAttack):
         with torch.no_grad():
             clean_logits, _, preds, _ = model(inputs)
         preds = preds.detach()
+        clean_logits = clean_logits.detach()
 
         x_adv, found = self._starting_points(model, inputs, preds)
         # Samples with no adversarial start stay clean: an attack that cannot
@@ -241,7 +253,9 @@ class BrendelBethge(AdversarialAttack):
         # Per-sample trust-region radius, as a fraction of the remaining
         # distance. Adapted below; see the module docstring for why a fixed
         # one deadlocks against the box constraint.
-        lr = torch.full((inputs.shape[0],), float(self.lr), device=inputs.device)
+        lr = torch.full(
+            (inputs.shape[0],), float(self.lr), device=inputs.device, dtype=inputs.dtype
+        )
 
         for _ in range(self.steps):
             if not found.any():
@@ -280,21 +294,26 @@ class BrendelBethge(AdversarialAttack):
                 lr * self.lr_shrink,
             )
 
-        x_adv = self._clamp(project_l2(x_adv.detach(), inputs, self.eps))
-        with torch.no_grad():
-            final_logits, _, final_preds, _ = model(x_adv)
+        candidate = self._clamp(project_l2(x_adv.detach(), inputs, self.eps))
+        # After the eps cap, not before: a perturbation that only flips the
+        # label outside the reported budget has not succeeded within it. And
+        # a failure comes back CLEAN rather than capped, so it reports
+        # `l2_norm == 0` instead of `l2_norm == eps` -- the walk's leftovers
+        # are not a measurement.
+        x_adv, success, final_logits = finalise_minimum_norm(
+            model, inputs, candidate, preds, clean_logits
+        )
+        delta = (x_adv - inputs).flatten(1)
 
         model.train(was_training)
         return AttackResult(
-            perturbed=x_adv.detach(),
-            effective_eps=(x_adv - inputs).abs().flatten(1).amax(dim=1).detach(),
+            perturbed=x_adv,
+            effective_eps=delta.abs().amax(dim=1).detach(),
             clean_preds=preds,
-            accepted_logits=final_logits.detach(),
-            l2_norm=(x_adv - inputs).flatten(1).norm(dim=1).detach(),
-            # After the eps cap, not before: a perturbation that only flips
-            # the label outside the reported budget has not succeeded within
-            # it, and reporting otherwise would overstate the attack.
-            success=(final_preds.detach() != preds),
+            accepted_logits=final_logits,
+            l2_norm=delta.norm(dim=1).detach(),
+            success=success,
+            minimised_norm="l2",
         )
 
     def __call__(

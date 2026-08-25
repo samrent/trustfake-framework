@@ -148,7 +148,7 @@ Attacks live in [`src/trustfake/attacks/`](src/trustfake/attacks/) and implement
 1. Create a class in `src/trustfake/attacks/` that subclasses `AdversarialAttack`, implements `name` and `__call__`, and keeps its perturbation within `self.eps` (use the inherited `self._clamp()` to enforce `clip_min`/`clip_max`). Use `fgsm.py` as a reference implementation. An attack that produces metadata (per-sample epsilon, an accept-check forward) overrides `run` instead, returns an `AttackResult`, and implements `__call__` as `self.run(...).perturbed` -- see `ace.py`; the evaluation pipe then scores the accept-check forward directly instead of re-running the model.
 2. Declare its taxonomy by overriding the class attributes that differ from the defaults — `family`, `direction`, `uses_labels`, `norm`, `minimum_norm` (see `AttackFamily` in `abc.py`). The defaults describe a fixed-budget, label-free, L∞ prediction attack, so only the attacks that differ have to say so. This is what lets a results table be grouped by threat family and lets a reader tell which rows assumed an attacker who holds the ground truth.
 3. Export it from [`src/trustfake/attacks/__init__.py`](src/trustfake/attacks/__init__.py). `attack_registry()` picks it up from there automatically.
-4. Add a Hydra config for it under [`configs/training/attack/`](configs/training/attack/) (see `fgsm.yaml`), so it can be selected with `+attack=<name>` when running `src/test.py`. Encode any parameter that changes the threat model into the config *name* (`ace` vs `ace_uint8`), so two runs cannot collide in the log directory.
+4. Add a Hydra config for it under [`configs/training/attack/`](configs/training/attack/) (see `fgsm.yaml`), so it can be selected with `+attack=<name>` when running `src/test.py`. Encode any parameter that changes the threat model into the attack's `name` (`ace` vs `ace_uint8`), not just the config filename -- `name` is what keys the log directory and the metric prefixes, so two configs sharing one silently overwrite each other. `tests/attacks/test_config_registry.py` enforces this.
 5. Register it in `ATTACKS` in [`tests/attacks/test_attack_contracts.py`](tests/attacks/test_attack_contracts.py) (see below) to get it covered by the validation suite. A minimum-norm attack also needs a test that it actually minimises — the contract battery only checks that it stays inside a budget, and a stalled min-norm attack passes that while reporting robustness the model does not have.
 
 **To validate an implementation:** [`tests/attacks/test_attack_contracts.py`](tests/attacks/test_attack_contracts.py) runs the same battery of checks against every attack in its `ATTACKS` list — that it stays within its `eps` L∞ ball, stays within `[clip_min, clip_max]`, doesn't mutate the input tensor or the model's weights, restores the model's training mode, returns a detached output, actually perturbs the input, is a no-op at `eps=0`, and is deterministic for a fixed model/input. Run it with:
@@ -169,7 +169,7 @@ untouched (label preservation is a constraint), whereas a
 **prediction-targeted** attack collapses it as a side effect of destroying
 accuracy. Reporting both under one "robustness" heading is what makes the
 first one invisible, so the family is data on the attack
-(`trustfake.attacks.attack_registry()`), not prose in this table.
+(`trustfake.attacks.attack_registry()` catalogues the classes; `describe(attack)` reports one configured instance), not prose in this table.
 
 `eps` is an L∞ budget except for the **minimum-norm** attacks (DeepFool, C&W,
 BB, PDPGD, FAB), where it is a cap on the *result* and the quantity to report
@@ -224,7 +224,7 @@ model's *own* clean prediction by default, which is the realisable threat
 model — an attacker in production does not hold the labels. `use_labels=true`
 switches them to the supplied ground truth, a strictly stronger attacker and
 therefore a different row in a results table, not a variant of the same one.
-`attack_registry()` records which mode a row was produced in.
+`describe(attack)` records which mode a row was produced in -- read it off the instance you ran, not off the class default, because for a parameterised attack the two can differ on exactly that field.
 
 ### Common corruptions
 

@@ -14,6 +14,7 @@ import torch
 
 from trustfake.attacks._common import (
     class_margin,
+    finalise_minimum_norm,
     model_logits,
     project_l1_ball,
     project_l2,
@@ -48,6 +49,32 @@ class PDPGD(AdversarialAttack):
     ``lambda > 0`` without a projection and raises the pressure on the
     constraint exactly on the samples that are still not adversarial.
 
+    **Both halves are scale-free, and that is load-bearing.** A decision
+    boundary is invariant to the model's logit scale -- multiply every logit
+    by a constant and no sample changes class -- so the norm needed to cross
+    it is invariant too, and an attack whose step size depends on that scale
+    is not measuring the boundary. Two things enforce it here:
+
+    * the primal step takes a UNIT step in the norm being minimised
+      (``sign(grad)`` for L_inf, ``grad/||grad||_2`` for L2) scaled by
+      ``lr * lambda``, so its magnitude is in *input* units. An unnormalised
+      ``lr * lambda * grad`` instead moves by whatever the logit scale
+      happens to be: on a small-logit model it never travels far enough to
+      cross, reports ``success=False`` on samples a plain fixed-budget PGD
+      breaks at the same eps, and the run looks completed.
+    * the proximal threshold is a FRACTION of the perturbation's own current
+      scale (``lr * prox_weight * ||delta||_1`` for L_inf, whose prox takes
+      an L1 radius; ``lr * prox_weight * ||delta||_2`` for L2). An absolute
+      threshold is inert as soon as ``delta`` is larger than it -- and since
+      the shrinking half of the method is the half that makes the reported
+      norm minimal, an inert prox turns PDPGD into ordinary gradient descent
+      that reports whatever norm it stopped at.
+
+    The dual normaliser is per-sample for the same reason it is deterministic
+    elsewhere in the suite: ``margin`` is divided by that sample's own clean
+    margin, not by the batch maximum, so a sample's result does not depend on
+    which other samples happened to share its batch.
+
     The best (smallest-norm) adversarial iterate is kept per sample, so the
     result never degrades over iterations. Samples never driven across the
     boundary are returned unperturbed and flagged in
@@ -59,18 +86,28 @@ class PDPGD(AdversarialAttack):
     contract directly; with ``norm="l2"`` it is an L2 radius, which implies
     the same L_inf bound.
 
+    The minimised quantity is reported under the norm it was minimised in:
+    ``AttackResult.minimised_norm`` names it and ``AttackResult.minimised``
+    returns it (``effective_eps`` for L_inf, ``l2_norm`` for L2).
+    ``l2_norm`` is left unset in L_inf mode rather than filled with the L2
+    norm of an L_inf-minimised perturbation, which is a different quantity
+    and would silently share an axis with the L2 attacks' answers.
+
     Deterministic: no random start.
 
     Args:
         eps: Radius the final perturbation is capped to, in `norm`.
         steps: Primal-dual iterations.
         norm: ``"linf"`` or ``"l2"`` -- the norm being minimised.
-        lr: Initial primal step size, cosine-annealed to ``lr * lr_final``.
+        lr: Initial primal step size in INPUT units (the gradient is
+            normalised), cosine-annealed to ``lr * lr_final``.
         lr_final: Fraction of `lr` the schedule ends at.
         dual_lr: Multiplicative dual ascent rate.
         lam_init: Initial dual variable.
-        prox_weight: Weight of the norm term relative to the margin term;
-            the proximal threshold each step is ``lr * prox_weight``.
+        prox_weight: Fraction of the perturbation's own scale the proximal
+            operator removes per step, before the `lr` schedule: the
+            threshold is ``lr * prox_weight * scale(delta)``. Raise it to
+            shrink harder at the cost of crossing the boundary less often.
         clip_min, clip_max: Valid input range.
     """
 
@@ -85,7 +122,7 @@ class PDPGD(AdversarialAttack):
         lr_final: float = 0.01,
         dual_lr: float = 0.1,
         lam_init: float = 1.0,
-        prox_weight: float = 0.05,
+        prox_weight: float = 1.0,
         clip_min: float = 0.0,
         clip_max: float = 1.0,
     ):
@@ -104,10 +141,13 @@ class PDPGD(AdversarialAttack):
     def name(self) -> str:
         return "pdpgd"
 
-    def _prox(self, delta: torch.Tensor, threshold: float) -> torch.Tensor:
-        """Proximal operator of `threshold * ||.||_p`, per sample."""
-        if threshold <= 0:
-            return delta
+    def _prox(self, delta: torch.Tensor, threshold: torch.Tensor) -> torch.Tensor:
+        """Proximal operator of `threshold * ||.||_p`, per sample.
+
+        `threshold` is a per-sample tensor, shape (B,): the operator's
+        strength has to track each sample's own perturbation scale, so a
+        single scalar for the batch is not enough.
+        """
         if self.norm == "linf":
             # Moreau: prox_{t||.||_inf}(v) = v - proj_{||u||_1 <= t}(v).
             return delta - project_l1_ball(delta, threshold)
@@ -116,6 +156,33 @@ class PDPGD(AdversarialAttack):
         norm = flat.norm(dim=1).clamp_min(1e-12)
         scale = (1.0 - threshold / norm).clamp_min(0.0)
         return (flat * scale[:, None]).view_as(delta)
+
+    def _prox_scale(self, delta: torch.Tensor) -> torch.Tensor:
+        """The perturbation's own scale, in the units the prox threshold takes.
+
+        The L_inf prox is driven by an L1 radius and the L2 prox by an L2
+        radius, so the threshold that removes a fixed FRACTION of the
+        perturbation each step is that fraction times this. Using an absolute
+        threshold instead makes the operator inert the moment `delta` grows
+        past it -- which is exactly when the shrinking is supposed to start.
+        """
+        flat = delta.flatten(1)
+        if self.norm == "linf":
+            return flat.abs().sum(dim=1)
+        return flat.norm(dim=1)
+
+    def _step_direction(self, grad: torch.Tensor) -> torch.Tensor:
+        """Unit step in the norm being minimised (steepest descent there).
+
+        Normalised, so ``lr`` is a distance in input space rather than a
+        distance multiplied by the model's logit scale. Every other min-norm
+        attack in the suite is scale-invariant; this is what makes this one
+        so too.
+        """
+        if self.norm == "linf":
+            return grad.sign()
+        flat = grad.flatten(1)
+        return (flat / flat.norm(dim=1).clamp_min(1e-12)[:, None]).view_as(grad)
 
     def _norm_of(self, delta: torch.Tensor) -> torch.Tensor:
         flat = delta.flatten(1)
@@ -138,16 +205,24 @@ class PDPGD(AdversarialAttack):
         model.eval()
 
         with torch.no_grad():
-            _, _, preds, _ = model(inputs)
+            clean_logits, _, preds, _ = model(inputs)
         preds = preds.detach()
+        clean_logits = clean_logits.detach()
+        # Per-sample reference for the dual normaliser below. Scales with the
+        # logit scale exactly as `margin` does, so their ratio does not.
+        clean_margin = class_margin(clean_logits, preds).abs().clamp_min(1e-12)
 
         batch = inputs.shape[0]
         expand = (-1,) + (1,) * (inputs.ndim - 1)
         delta = torch.zeros_like(inputs)
-        lam = torch.full((batch,), float(self.lam_init), device=inputs.device)
+        lam = torch.full(
+            (batch,), float(self.lam_init), device=inputs.device, dtype=inputs.dtype
+        )
 
         best = torch.zeros_like(inputs)
-        best_norm = torch.full((batch,), float("inf"), device=inputs.device)
+        best_norm = torch.full(
+            (batch,), float("inf"), device=inputs.device, dtype=inputs.dtype
+        )
 
         for step in range(self.steps):
             # Cosine schedule on the primal step size (the paper's decaying
@@ -163,9 +238,11 @@ class PDPGD(AdversarialAttack):
             margin = margin.detach()
 
             # Primal: dual-weighted descent on the margin, then the prox of
-            # the norm (this is the step that shrinks delta).
-            d = delta - lr * lam.view(expand) * grad
-            d = self._prox(d, lr * self.prox_weight)
+            # the norm (this is the step that shrinks delta). The direction
+            # is a unit step in the minimised norm, so `lr` is a distance in
+            # input space and nothing here depends on the logit scale.
+            d = delta - lr * lam.view(expand) * self._step_direction(grad)
+            d = self._prox(d, lr * self.prox_weight * self._prox_scale(d))
             # Stay inside the box in *perturbation* space, so the prox and
             # the clip cannot fight each other across iterations.
             delta = (self._clamp(inputs + d) - inputs).detach()
@@ -173,7 +250,13 @@ class PDPGD(AdversarialAttack):
             # Dual: raise the pressure where the constraint is still violated
             # (margin > 0, i.e. not yet adversarial), release it where it is
             # satisfied. Multiplicative, so lambda stays positive.
-            scale = margin / margin.abs().amax().clamp_min(1e-12)
+            #
+            # Normalised PER SAMPLE, by that sample's own clean margin. The
+            # batch maximum would throttle every sample's dual rate by the
+            # single largest-margin sample present, making one sample's
+            # reported norm a function of its batch-mates and of the shuffle
+            # -- a robustness number that moves when the dataloader does.
+            scale = (margin / clean_margin).clamp(-1.0, 1.0)
             lam = (lam * torch.exp(self.dual_lr * scale)).clamp(1e-4, 1e4)
 
             # Keep the smallest-norm adversarial iterate seen so far.
@@ -186,23 +269,28 @@ class PDPGD(AdversarialAttack):
             best_norm = torch.where(improved, cur_norm, best_norm)
 
         found = torch.isfinite(best_norm)
-        x_adv = self._clamp(self._project(inputs + best, inputs))
+        candidate = self._clamp(self._project(inputs + best, inputs))
         # Samples never driven across the boundary are returned clean.
-        x_adv = torch.where(found.view(expand), x_adv, inputs)
+        candidate = torch.where(found.view(expand), candidate, inputs)
 
-        with torch.no_grad():
-            final_logits, _, final_preds, _ = model(x_adv)
+        # Success measured after the eps cap, and every failure returned
+        # clean, so a failed sample's reported norm is 0 rather than the cap.
+        x_adv, success, final_logits = finalise_minimum_norm(
+            model, inputs, candidate, preds, clean_logits
+        )
+        delta = (x_adv - inputs).flatten(1)
 
         model.train(was_training)
         return AttackResult(
-            perturbed=x_adv.detach(),
-            effective_eps=(x_adv - inputs).abs().flatten(1).amax(dim=1).detach(),
+            perturbed=x_adv,
+            effective_eps=delta.abs().amax(dim=1).detach(),
             clean_preds=preds,
-            accepted_logits=final_logits.detach(),
-            l2_norm=(x_adv - inputs).flatten(1).norm(dim=1).detach(),
-            # Measured after the eps cap: a flip that only survives outside
-            # the reported budget is not a success inside it.
-            success=(final_preds.detach() != preds),
+            accepted_logits=final_logits,
+            # Only when L2 is what was minimised; in L_inf mode the answer is
+            # `effective_eps` and `minimised` returns it.
+            l2_norm=delta.norm(dim=1).detach() if self.norm == "l2" else None,
+            success=success,
+            minimised_norm=self.norm,
         )
 
     def __call__(

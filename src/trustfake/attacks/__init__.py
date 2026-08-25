@@ -4,6 +4,7 @@ from .abc import (
     AttackFamily,
     AttackResult,
     attack_registry,
+    describe,
 )
 from .ace import ACE
 from .adaptive_autoattack import AdaptiveAutoAttack
@@ -27,6 +28,7 @@ __all__ = [
     "AttackFamily",
     "AttackDirection",
     "attack_registry",
+    "describe",
     # confidence-targeted
     "ACE",
     "ParamACE",

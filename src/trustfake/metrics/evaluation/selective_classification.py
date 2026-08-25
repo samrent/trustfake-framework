@@ -105,7 +105,8 @@ def rc_curve(
     threshold is an upper bound where a confidence-based formulation would
     use a lower one. No operating point inside a tie block is ever
     evaluated, so the curve is a property of the predictions and not of the
-    row order. Block sizes are recoverable as ``n * diff(coverage)``.
+    row order. Block sizes are recoverable as ``n * diff(coverage, prepend=0)``
+    -- the prepend matters, since a bare ``diff`` drops the first block.
     """
     u = _as_score(uncertainty)
     loss = np.asarray(errors, dtype=np.float64).ravel()
@@ -237,6 +238,17 @@ def operating_point_at_coverage(
         printing ``risk@cov0.8`` without the coverage actually reached is
         not reporting a risk at 80% coverage.
 
+        When NO operating point sits at or below the target -- every tie
+        block is coarser than it, the extreme case being one block covering
+        everything -- there is nothing at or below to return, so the
+        SMALLEST achievable coverage comes back and it is ABOVE the target.
+        That row is not the risk that was asked for, and the returned
+        coverage is the only thing that says so: against a fully saturated
+        score the fallback hands back the full-coverage error rate under a
+        ``risk@cov0.5`` heading. This is why the achieved coverage travels
+        beside the risk everywhere in this module, and why
+        `n_operating_points` is logged next to AURC.
+
     Raises:
         ValueError: If ``target_coverage`` is outside (0, 1].
     """
@@ -244,6 +256,8 @@ def operating_point_at_coverage(
         raise ValueError("target_coverage must be in (0, 1]")
     cov, sel, gen, thr = rc_curve(uncertainty, errors)
     ok = np.flatnonzero(cov <= target_coverage + 1e-12)
+    # `ok` is empty only when even the most selective operating point already
+    # covers more than the target; index 0 is then the closest available.
     j = int(ok[-1]) if ok.size else 0
     return float(cov[j]), float(sel[j]), float(gen[j]), float(thr[j])
 
@@ -254,7 +268,8 @@ def risk_at_coverage(
     """Selective risk at the largest achievable coverage <= target. Always
     report :func:`operating_point_at_coverage`'s achieved coverage next to
     it: under heavy ties the achieved coverage can sit far below the target
-    and the bare number lies."""
+    -- or, when no operating point reaches the target at all, above it -- and
+    the bare number carries no sign of either."""
     return operating_point_at_coverage(uncertainty, errors, target_coverage)[1]
 
 
@@ -303,6 +318,12 @@ class AURiskCoverage(Metric):
         return aurc_from_scores(scores, errors, self.weights)
 
     def compute(self) -> float:
+        # An empty split is undefined, not an error: a geometry filter or a
+        # per-class breakout can legitimately select no rows. `torch.cat` on
+        # an empty list raises, so this has to be tested first, and NaN is the
+        # honest answer -- the same one the failure-detection metrics give.
+        if not self.probs:
+            return float("nan")
         probs = torch.cat(self.probs).cpu().numpy()
         targets = torch.cat(self.target).cpu().numpy()
         scores = torch.cat(self.scores).squeeze().cpu().numpy()

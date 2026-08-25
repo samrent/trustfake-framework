@@ -4,9 +4,11 @@ Each one is checked on the property it exists for, not merely on "the tensor
 changed": downscale and blur must REMOVE high-frequency content (an aliasing
 downsample would add some instead, which on a forensic task is the opposite
 of the intended condition), and the noise condition must be reproducible
-without borrowing the global RNG.
+without borrowing the global RNG and without depending on how many times it
+has already been called.
 """
 
+import pytest
 import torch
 
 from trustfake.corruptions import Downscale, GaussianBlur, GaussianNoise
@@ -69,19 +71,39 @@ def test_gaussian_noise_is_reproducible_without_the_global_rng():
     first = corruption(None, images)
     torch.manual_seed(1234)  # global stream churned in between
     _ = torch.randn(1000)
-    corruption.reset()
     second = corruption(None, images)
 
     assert torch.equal(first, second)
 
 
-def test_gaussian_noise_batches_are_independent():
-    """One generator advanced across calls, not re-seeded per call: two
-    consecutive batches must not receive the identical noise field."""
+def test_gaussian_noise_repeats_itself_on_a_second_call():
+    """THE determinism property, and the one an advancing generator broke: a
+    second `trainer.test()` on the same eval module calls the same instance
+    again, so a stream carried across calls reports a different accuracy for
+    the same model, data and condition (0.2917 -> 0.3750 on a smoke run).
+    The condition has to be a pure function of its input, like every other
+    stochastic component here (`attacks/pgd.py::_random_start` re-seeds
+    inside the call for the same reason)."""
     images = torch.full((2, 3, 16, 16), 0.5)
     corruption = GaussianNoise(sigma=0.05, seed=0)
 
-    assert not torch.equal(corruption(None, images), corruption(None, images))
+    first = corruption(None, images)
+    second = corruption(None, images)
+    third = corruption.run(None, images).perturbed
+
+    assert torch.equal(first, second)
+    assert torch.equal(first, third)
+
+
+def test_gaussian_noise_seed_still_selects_the_field():
+    """Deterministic must not mean fixed: a different seed is a different
+    draw, or the `seed` argument would be decoration."""
+    images = torch.full((2, 3, 16, 16), 0.5)
+
+    assert not torch.equal(
+        GaussianNoise(sigma=0.05, seed=0)(None, images),
+        GaussianNoise(sigma=0.05, seed=1)(None, images),
+    )
 
 
 def test_gaussian_noise_has_the_requested_scale():
@@ -126,3 +148,46 @@ def test_gaussian_blur_severity_is_monotone_in_sigma():
     ]
 
     assert energies[0] > energies[1] > energies[2]
+
+
+# --------------------------------------------------------------------------
+# no-op parameterisations: the clean row wearing a corruption's name
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("factory", "kwargs"),
+    [(Downscale, {"factor": 1.0}), (GaussianNoise, {"sigma": 0.0})],
+    ids=["downscale_factor_1", "gaussian_noise_sigma_0"],
+)
+def test_a_no_op_parameter_is_refused(factory, kwargs):
+    """`factor=1` and `sigma=0` are not mild rungs of a ladder, they are the
+    CLEAN condition under a distinct metric prefix. A results table then
+    gains a corruption row that is bit-identical to the clean one, and a
+    reader cannot tell it from a detector that shrugged off the condition --
+    the most flattering error a robustness table can make. `codec.py` guards
+    the same shape of no-op by pinning WebP to `lossless=False`."""
+    with pytest.raises(ValueError, match="no-op"):
+        factory(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("factory", "kwargs"),
+    [(Downscale, {"factor": 1.0}), (GaussianNoise, {"sigma": 0.0})],
+    ids=["downscale_factor_1", "gaussian_noise_sigma_0"],
+)
+def test_the_refused_parameter_would_really_have_been_a_no_op(factory, kwargs):
+    """The premise behind the refusal, asserted rather than assumed: run the
+    corruption's own arithmetic at the rejected parameter and the output is
+    bit-identical to the input. If a future change made these parameters
+    genuinely lossy, this test fails and the guard should be revisited."""
+    images = torch.rand(2, 3, 16, 16)
+
+    if factory is Downscale:
+        corruption = Downscale(factor=2.0)
+        corruption.factor = 1.0
+    else:
+        corruption = GaussianNoise(sigma=0.05, seed=0)
+        corruption.sigma = 0.0
+
+    assert torch.equal(corruption.corrupt(images), images)

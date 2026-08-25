@@ -12,6 +12,7 @@ __all__ = [
     "AttackFamily",
     "AttackDirection",
     "attack_registry",
+    "describe",
 ]
 
 
@@ -52,11 +53,20 @@ class AttackDirection(StrEnum):
 def attack_registry() -> dict[str, dict]:
     """Taxonomy of every exported attack: family, direction, label use, norm.
 
-    Built by instantiating each attack at its defaults, so it cannot drift
-    from the implementations the way a hand-maintained table does. Used to
-    group a results table by threat family and to flag which rows depend on
-    ground-truth labels (an attacker who has them is a different, stronger
-    threat model than one who does not).
+    Built by instantiating each exported attack at its defaults, so it cannot
+    drift from the implementations the way a hand-maintained table does.
+
+    Keyed by CLASS name, not by the logged `name`. Several attacks carry a
+    parameter that changes the threat model and therefore the logged name --
+    `ACE(quantize=True)` reports `ace_uint8`, `ParamACE` encodes its
+    `(eta, omega)` -- so a name-keyed catalogue could never enumerate them
+    from defaults alone, and would quietly omit exactly the variants most
+    likely to be misread. This is the catalogue of what EXISTS; for a
+    specific run, read the taxonomy off the instance you ran (or pass it to
+    :func:`describe`), which is always exact.
+
+    `default_name` is the logged name of the default configuration, which is
+    what most configs produce.
     """
     from trustfake import attacks as _attacks
 
@@ -67,16 +77,27 @@ def attack_registry() -> dict[str, dict]:
             continue
         if obj is AdversarialAttack:
             continue
-        instance = obj()
-        registry[instance.name] = {
-            "class": symbol,
-            "family": str(instance.family),
-            "direction": str(instance.direction),
-            "uses_labels": instance.uses_labels,
-            "norm": instance.norm,
-            "minimum_norm": instance.minimum_norm,
-        }
+        registry[symbol] = describe(obj())
     return registry
+
+
+def describe(attack: "AdversarialAttack") -> dict:
+    """Taxonomy of one attack INSTANCE, exactly as configured.
+
+    Prefer this over :func:`attack_registry` when annotating results: the
+    instance is the thing that produced the row, and for a parameterised
+    attack the class-level defaults can differ from it in ways that matter
+    (whether ground truth was used, which direction confidence was pushed).
+    """
+    return {
+        "class": type(attack).__name__,
+        "default_name": attack.name,
+        "family": str(attack.family),
+        "direction": str(attack.direction),
+        "uses_labels": attack.uses_labels,
+        "norm": attack.norm,
+        "minimum_norm": attack.minimum_norm,
+    }
 
 
 @dataclass
@@ -103,17 +124,31 @@ class AttackResult:
         accepted_logits: Logits from the forward pass that accepted the
             perturbation, shape (B, C). None when the attack has no accept
             test.
-        l2_norm: Per-sample L2 norm of the perturbation, shape (B,). Set by
-            the minimum-norm attacks (DeepFool, C&W, BB, PDPGD), for which
-            this -- not `eps` -- is the quantity being minimised and the one
-            a robustness curve should be read against. None for fixed-budget
-            attacks, where it adds nothing to `effective_eps`.
+        l2_norm: Per-sample L2 norm of the perturbation, shape (B,). Set only
+            by the minimum-norm attacks that actually minimise L2 (DeepFool,
+            C&W, BB, and PDPGD in ``norm="l2"`` mode) -- for those this, not
+            `eps`, is the quantity being minimised. None for fixed-budget
+            attacks, where it adds nothing to `effective_eps`, and None for
+            PDPGD in ``norm="linf"`` mode, which minimises L_inf: reporting
+            the L2 norm of an L_inf-minimised perturbation would put a
+            different quantity on the same axis of the same curve.
+        minimised_norm: ``"l2"``, ``"linf"`` or None -- which norm a
+            minimum-norm attack minimised, and therefore which field carries
+            the answer. None for fixed-budget attacks. Read `minimised`
+            rather than picking the field by hand.
         success: Per-sample flag, shape (B,), for whether the attack reached
             its own goal -- a changed prediction for the minimum-norm
             attacks. None when the attack does not define one. A minimum-norm
             attack that fails on a sample returns that sample unperturbed
             rather than a perturbation that does nothing, so this is the
             field that separates "robust" from "not attacked".
+
+    A failed minimum-norm sample is returned clean, which means its reported
+    norm is 0 -- the same number a zero-cost break would produce. Every
+    aggregate over `l2_norm`, `effective_eps` or `minimised` must therefore
+    be MASKED BY `success`: an unmasked mean is pulled toward zero by exactly
+    the samples the attack could not break, i.e. it reports the model as less
+    robust the more robust it actually is.
     """
 
     perturbed: torch.Tensor
@@ -122,6 +157,23 @@ class AttackResult:
     accepted_logits: torch.Tensor | None = None
     l2_norm: torch.Tensor | None = None
     success: torch.Tensor | None = None
+    minimised_norm: str | None = None
+
+    @property
+    def minimised(self) -> torch.Tensor | None:
+        """Per-sample value of the quantity the attack actually minimised.
+
+        The field it comes from depends on the norm, so reading it by hand is
+        how a table ends up plotting L2 against L_inf. None for a
+        fixed-budget attack. Mask by `success` before aggregating.
+        """
+        if self.minimised_norm is None:
+            return None
+        if self.minimised_norm == "l2":
+            return self.l2_norm
+        if self.minimised_norm == "linf":
+            return self.effective_eps
+        raise ValueError(f"unknown minimised_norm {self.minimised_norm!r}")
 
 
 class AdversarialAttack(ABC):

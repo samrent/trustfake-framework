@@ -37,6 +37,7 @@ from torch import Tensor
 from torch.nn.functional import cross_entropy, softmax
 
 from trustfake.attacks._common import model_logits
+from trustfake.pipes.train._common import RobustValidationMixin, eval_mode
 from trustfake.pipes.train.abc import TrainingModule
 from trustfake.pipes.train.adversarial_training import _AdversarialTrainingBase
 from trustfake.pipes.train.awp import AWPMixin
@@ -76,7 +77,9 @@ class ConfidenceAdversarialTrainingModule(_AdversarialTrainingBase):
         inverting the step sign in two places -- a sign error here produces a
         working, plausible-looking attack that does the exact opposite.
         """
-        with torch.no_grad():
+        # Eval mode: freezing the prediction is a read of the model, not a
+        # training forward, so it must not update BatchNorm either.
+        with torch.no_grad(), eval_mode(self.model):
             yhat = self.model(x)[2].detach().long()
 
         def objective(x_adv: Tensor) -> Tensor:
@@ -94,11 +97,12 @@ class ConfidenceAdversarialTrainingModule(_AdversarialTrainingBase):
         adv_logits = model_logits(self.model, x_adv)
         loss = self.model.loss_fn(adv_logits, y)
 
-        _, clean_output = self._output(x)
-        return loss, clean_output
+        return loss, self._metrics_output(x)
 
 
-class ConfidenceRegularisedTrainingModule(AWPMixin, TrainingModule):
+class ConfidenceRegularisedTrainingModule(
+    AWPMixin, RobustValidationMixin, TrainingModule
+):
     """Cross-entropy plus a penalty on confident mistakes.
 
     ``L = CE(f(x), y) + lambda * mean( max_k p_k(x) * 1[argmax != y] )``
@@ -126,19 +130,42 @@ class ConfidenceRegularisedTrainingModule(AWPMixin, TrainingModule):
         super().__init__(*args, **kwargs)
         self.lambda_reg = lambda_reg
 
+    def _objective(self, x: Tensor, y: Tensor) -> tuple[Tensor, Tensor, tuple]:
+        forward = self.model.forward(x)
+        logits = forward[0]
+        confidence = softmax(logits, dim=1).amax(dim=1)
+        wrong = (forward[2].long() != y).float().detach()
+        penalty = (confidence * wrong).mean()
+        return (
+            self.model.loss_fn(logits, y) + self.lambda_reg * penalty,
+            penalty,
+            forward,
+        )
+
+    def awp_objective(self, inputs: Tensor, x_adv: Tensor, targets: Tensor) -> Tensor:
+        """This arm has no inner adversary, so `x_adv` IS the clean batch and
+        the weight adversary ascends the arm's own objective on it."""
+        return self._objective(inputs, targets.long())[0]
+
     def compute_loss(
         self, batch: list[Tensor, Tensor]
     ) -> tuple[Tensor, ClassificationModelOutput]:
         x, y = batch[0], batch[1].long()
 
-        logits, probs, preds, uncertainty = self.model.forward(x)
-        confidence = softmax(logits, dim=1).amax(dim=1)
-        wrong = (preds.long() != y).float().detach()
-        penalty = (confidence * wrong).mean()
+        # This arm generates no adversarial batch, so the clean one is passed
+        # for both. Omitting this call entirely -- which is what happened --
+        # left `awp_gamma` accepted from the config, stored, and never read:
+        # the with/without-AWP ablation would have produced two bit-identical
+        # arms and read as "AWP does not help the confidence-regularised arm".
+        self.apply_awp(x, x, y)
 
-        loss = self.model.loss_fn(logits, y) + self.lambda_reg * penalty
+        loss, penalty, (logits, probs, preds, uncertainty) = self._objective(x, y)
 
-        if self._trainer is not None:
+        # Log only from the training path. `validation_step` calls this same
+        # method, and the two hooks have different `on_step` defaults, so a
+        # bare `train_confidence_penalty` column ended up holding the
+        # VALIDATION value while the training value hid in `..._epoch`.
+        if self._trainer is not None and self.training:
             self.log("train_confidence_penalty", penalty, on_epoch=True)
 
         output = ClassificationModelOutput(

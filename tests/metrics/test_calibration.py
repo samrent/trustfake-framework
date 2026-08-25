@@ -292,3 +292,55 @@ def test_calibrate_temperature_empty_loader_is_a_noop():
         TensorDataset(torch.empty(0, 12), torch.empty(0, dtype=torch.long))
     )
     assert calibrate_temperature(wrapper, empty, device="cpu") == 1.0
+
+
+def test_ece_default_reproduces_torchmetrics_on_saturated_confidence():
+    """The regression that mattered: torchmetrics gives confidence of exactly
+    1.0 a bin of its own, and bins are left-open. Folding that bin into the
+    last regular one understated ECE 26-fold on a saturated softmax -- the
+    exact regime `get_calibration_metrics` reports `ece` and `ece_equal_mass`
+    side by side in, so the two would have been incomparable."""
+    import numpy as np
+    import torch
+    from torchmetrics.classification import MulticlassCalibrationError
+
+    from trustfake.metrics.calibration.scores import ece_from_scores
+
+    conf = np.concatenate([np.full(900, 0.94), np.full(100, 1.0)])
+    correct = np.concatenate([np.ones(900), np.repeat([1.0, 0.0], 50)])
+
+    probs = torch.tensor(np.stack([conf, 1.0 - conf], axis=1))
+    targets = torch.tensor(np.where(correct.astype(bool), 0, 1))
+    reference = float(
+        MulticlassCalibrationError(num_classes=2, n_bins=15, norm="l1")(probs, targets)
+    )
+
+    assert reference > 0.1  # the fixture is meant to be badly calibrated
+    assert ece_from_scores(conf, correct) == pytest.approx(reference, abs=1e-5)
+
+
+@pytest.mark.parametrize("norm", ["l1", "l2", "max"])
+@pytest.mark.parametrize("n_bins", [5, 15, 50])
+def test_ece_matches_torchmetrics_across_bins_and_norms(n_bins, norm):
+    import numpy as np
+    import torch
+    from torchmetrics.classification import MulticlassCalibrationError
+
+    from trustfake.metrics.calibration.scores import ece_from_scores
+
+    rng = np.random.default_rng(0)
+    conf = np.clip(rng.beta(5, 1, 400), 0.5, 1.0)
+    conf[rng.random(400) < 0.3] = 1.0  # force the saturated regime
+    correct = (rng.random(400) < conf).astype(float)
+
+    probs = torch.tensor(np.stack([conf, 1.0 - conf], axis=1))
+    targets = torch.tensor(np.where(correct.astype(bool), 0, 1))
+    reference = float(
+        MulticlassCalibrationError(num_classes=2, n_bins=n_bins, norm=norm)(
+            probs, targets
+        )
+    )
+
+    assert ece_from_scores(conf, correct, n_bins=n_bins, norm=norm) == pytest.approx(
+        reference, abs=1e-5
+    )

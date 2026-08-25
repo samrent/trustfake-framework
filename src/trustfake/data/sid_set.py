@@ -188,6 +188,10 @@ class SIDSetDataModule(L.LightningDataModule):
             of the training run. Anything but 'none' changes what a reported
             number means -- and 'matched' changes the class prior too, so
             the majority-class floor moves with it. Say so in the report.
+            A filter that leaves a role with fewer than two classes is
+            REFUSED, not warned about: on real SID-Set 'nonsquare' does
+            exactly that, and every metric downstream of it is undefined
+            rather than merely wrong (see `_apply_geometry_filter`).
         squarecrop: Centre-crop every image to its short side BEFORE the
             resize (`CentreSquareCrop`). The pixel-level geometry control.
             Use it for fit and evaluation together or it is a covariate
@@ -283,6 +287,25 @@ class SIDSetDataModule(L.LightningDataModule):
         the number that proves the control did its job: equal rates across
         labels means ``width == height`` carries no label information, which
         is the entire claim a controlled row makes.
+
+        A role left with FEWER THAN TWO CLASSES raises rather than warns,
+        and the choice is deliberate. On real SID-Set
+        ``geometry_filter=nonsquare`` leaves 569 rows that are all label 0 --
+        the filter strips essentially every fake, which is the artifact
+        stated in its starkest form. The unequal-rate warning below cannot
+        fire on that subset (a single key in `rates` is trivially equal to
+        itself), so the loudest thing in the log would be an INFO line, and
+        what comes out the far end is not a wrong number but an undefined
+        one: macro accuracy is capped at 1/3 by the two classes that have no
+        rows, detection AUROC is NaN for want of a positive, and on `calib`
+        the moderation thresholds are fitted with zero fakes and then
+        applied to `test`. None of those has a runtime symptom. The module
+        already refuses the neighbouring failure -- `geometry_selection`
+        raises when a filter selects no rows at all, "there is no controlled
+        subset to report on" -- and a single-class subset is the same
+        sentence with one more row in it. Refusing here costs a run that was
+        going to produce numbers nobody could use; warning costs a table
+        that looks finished.
         """
         widths, heights = _original_dims(hf_dataset, self.image_column)
         labels = np.asarray(hf_dataset[self.label_column], dtype=np.int64)
@@ -301,6 +324,23 @@ class SIDSetDataModule(L.LightningDataModule):
             f"{len(keep)}/{len(hf_dataset)} rows kept; square rate by label "
             f"{rates}. Report this protocol beside any number from it."
         )
+        if len(rates) < 2:
+            present = sorted(rates)
+            missing = sorted(set(range(self.num_classes)) - set(present))
+            msg = (
+                f"geometry_filter '{self.geometry_filter}' left role '{role}' "
+                f"with a SINGLE class: {len(keep)}/{len(hf_dataset)} rows kept, "
+                f"all of label {present} (missing {missing}). Nothing "
+                "downstream can be read from that subset -- macro accuracy is "
+                f"capped at 1/{self.num_classes}, detection AUROC is undefined "
+                "for want of both classes, and on 'calib' the moderation "
+                "thresholds would be fitted with none. Use a filter that "
+                "leaves both classes ('matched' equalises the geometry rate "
+                "without emptying a class), or report the raw split and state "
+                "the artifact instead."
+            )
+            logger.error(msg)
+            raise ValueError(msg)
         if len(set(rates.values())) > 1:
             logger.warning(
                 f"geometry_filter '{self.geometry_filter}' left unequal square "

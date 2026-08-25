@@ -1,6 +1,6 @@
 import torch
 
-from trustfake.attacks._common import model_logits, project_l2
+from trustfake.attacks._common import finalise_minimum_norm, model_logits, project_l2
 from trustfake.attacks.abc import AdversarialAttack, AttackResult
 from trustfake.models.wrapper import TrustFakeWrapper
 
@@ -27,6 +27,10 @@ class CarliniWagner(AdversarialAttack):
     constant ``c`` is used rather than the paper's outer binary search, for
     a bounded, deterministic per-batch cost; raise ``c`` to trade norm for
     success rate. Deterministic.
+
+    A sample never flipped inside the cap is returned UNPERTURBED with
+    ``success=False`` and ``l2_norm == 0``, as in every other min-norm attack
+    here. Any aggregate over ``l2_norm`` must be masked by ``success``.
 
     Args:
         eps (float): L2 radius the perturbation is capped to.
@@ -90,7 +94,12 @@ class CarliniWagner(AdversarialAttack):
         optimizer = torch.optim.Adam([w], lr=self.lr)
 
         best = inputs.clone().detach()
-        best_norm = torch.full((n,), float("inf"), device=inputs.device)
+        # `dtype=inputs.dtype`, not the float32 default: `best_norm[improve]
+        # = norm[improve]` below is an index_put_, which (unlike arithmetic)
+        # does not promote, so a float64 batch raises rather than upcasting.
+        best_norm = torch.full(
+            (n,), float("inf"), device=inputs.device, dtype=inputs.dtype
+        )
 
         for _ in range(self.steps):
             optimizer.zero_grad()
@@ -112,20 +121,23 @@ class CarliniWagner(AdversarialAttack):
                 best[improve] = x_adv[improve]
                 best_norm[improve] = norm[improve]
 
-        best = self._clamp(project_l2(best.detach(), inputs, self.eps))
-        with torch.no_grad():
-            final_logits, _, final_preds, _ = model(best)
+        candidate = self._clamp(project_l2(best.detach(), inputs, self.eps))
+        # Success measured after the eps cap, and every failure returned
+        # clean, so a failed sample's reported norm is 0 rather than the cap.
+        x_adv, success, final_logits = finalise_minimum_norm(
+            model, inputs, candidate, preds, clean_logits.detach()
+        )
+        delta = (x_adv - inputs).flatten(1)
 
         model.train(was_training)
         return AttackResult(
-            perturbed=best.detach(),
-            effective_eps=(best - inputs).abs().flatten(1).amax(dim=1).detach(),
+            perturbed=x_adv,
+            effective_eps=delta.abs().amax(dim=1).detach(),
             clean_preds=preds,
-            accepted_logits=final_logits.detach(),
-            l2_norm=(best - inputs).flatten(1).norm(dim=1).detach(),
-            # Measured after the eps cap: a flip that only survives outside
-            # the reported budget is not a success inside it.
-            success=(final_preds.detach() != preds),
+            accepted_logits=final_logits,
+            l2_norm=delta.norm(dim=1).detach(),
+            success=success,
+            minimised_norm="l2",
         )
 
     def __call__(

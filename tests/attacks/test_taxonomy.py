@@ -40,9 +40,11 @@ def test_every_exported_attack_is_registered():
     assert len(REGISTRY) == len(exported)
 
 
-def test_attack_names_are_unique():
+def test_default_attack_names_are_unique():
     """Names key the logged metric prefixes and the storage files; a
-    collision silently merges two conditions into one row."""
+    collision silently merges two conditions into one row. Parameterised
+    variants are covered in test_config_registry.py, which checks the names
+    the CONFIGS actually produce."""
     import trustfake.attacks as attacks
 
     names = [
@@ -56,23 +58,23 @@ def test_attack_names_are_unique():
 
 
 @pytest.mark.parametrize(
-    ("name", "family"),
+    ("class_name", "family"),
     [
-        ("ace", AttackFamily.CONFIDENCE),
-        ("param_ace", AttackFamily.CONFIDENCE),
-        ("overconf", AttackFamily.CONFIDENCE),
-        ("underconf", AttackFamily.CONFIDENCE),
-        ("uncertainty_fgsm", AttackFamily.UNCERTAINTY),
-        ("evidence_pgd", AttackFamily.EVIDENCE),
-        ("fgsm", AttackFamily.PREDICTION),
-        ("pgd", AttackFamily.PREDICTION),
-        ("a3", AttackFamily.PREDICTION),
-        ("bb", AttackFamily.PREDICTION),
-        ("pdpgd", AttackFamily.PREDICTION),
+        ("ACE", AttackFamily.CONFIDENCE),
+        ("ParamACE", AttackFamily.CONFIDENCE),
+        ("OverConfidence", AttackFamily.CONFIDENCE),
+        ("UnderConfidence", AttackFamily.CONFIDENCE),
+        ("UncertaintyFGSM", AttackFamily.UNCERTAINTY),
+        ("EvidenceTargetedPGD", AttackFamily.EVIDENCE),
+        ("FGSM", AttackFamily.PREDICTION),
+        ("PGD", AttackFamily.PREDICTION),
+        ("AdaptiveAutoAttack", AttackFamily.PREDICTION),
+        ("BrendelBethge", AttackFamily.PREDICTION),
+        ("PDPGD", AttackFamily.PREDICTION),
     ],
 )
-def test_family_assignment(name, family):
-    assert REGISTRY[name]["family"] == str(family)
+def test_family_assignment(class_name, family):
+    assert REGISTRY[class_name]["family"] == str(family)
 
 
 @pytest.mark.parametrize(
@@ -92,16 +94,16 @@ def test_minimum_norm_attacks_are_flagged():
     """`eps` means a cap for these and a budget for the others. Reading a
     min-norm row as if eps were the search budget understates the attack."""
     min_norm = {n for n, meta in REGISTRY.items() if meta["minimum_norm"]}
-    assert min_norm == {"deepfool", "cw", "bb", "pdpgd", "fab"}
+    assert min_norm == {"DeepFool", "CarliniWagner", "BrendelBethge", "PDPGD", "FAB"}
 
 
 def test_l2_attacks_are_flagged():
     """Robustness does not transfer between norms, so a table that does not
     carry the norm is not comparable row to row."""
-    assert REGISTRY["pgd_l2"]["norm"] == "l2"
+    assert REGISTRY["PGDL2"]["norm"] == "l2"
     assert BrendelBethge.norm == "l2"
     assert DeepFool.norm == "l2"
-    assert REGISTRY["pgd"]["norm"] == "linf"
+    assert REGISTRY["PGD"]["norm"] == "linf"
 
 
 def test_label_use_is_opt_in_for_the_prediction_attacks():
@@ -118,8 +120,8 @@ def test_label_use_is_opt_in_for_the_prediction_attacks():
 def test_registry_reports_label_use_from_the_instance_defaults():
     """The registry describes the DEFAULT configuration of each attack, which
     is what a reader assumes when a table names an attack without a footnote."""
-    assert REGISTRY["pgd"]["uses_labels"] is False
-    assert REGISTRY["ace"]["uses_labels"] is True
+    assert REGISTRY["PGD"]["uses_labels"] is False
+    assert REGISTRY["ACE"]["uses_labels"] is True
 
 
 def test_use_labels_actually_changes_the_attack(model, inputs, targets):

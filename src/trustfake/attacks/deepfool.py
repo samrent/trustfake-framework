@@ -1,6 +1,6 @@
 import torch
 
-from trustfake.attacks._common import model_logits, project_l2
+from trustfake.attacks._common import finalise_minimum_norm, model_logits, project_l2
 from trustfake.attacks.abc import AdversarialAttack, AttackResult
 from trustfake.models.wrapper import TrustFakeWrapper
 
@@ -21,6 +21,12 @@ class DeepFool(AdversarialAttack):
 
     A small overshoot factor pushes just past the boundary so the flip is
     numerically stable. Deterministic.
+
+    A sample the attack cannot flip inside the cap is returned UNPERTURBED
+    with ``success=False`` and ``l2_norm == 0``, as in every other min-norm
+    attack here: capping the failed walk instead would report ``l2_norm ==
+    eps`` on a failure, which is indistinguishable from a genuine
+    eps-cost break.
 
     Args:
         eps (float): L2 radius the perturbation is capped to.
@@ -64,6 +70,7 @@ class DeepFool(AdversarialAttack):
 
         x_adv = inputs.clone().detach()
         active = torch.ones(inputs.shape[0], dtype=torch.bool, device=inputs.device)
+        expand = (-1,) + (1,) * (inputs.ndim - 1)
 
         for _ in range(self.steps):
             if not active.any():
@@ -85,41 +92,57 @@ class DeepFool(AdversarialAttack):
             f_pred = logits[torch.arange(len(preds)), preds]  # (B,)
 
             best_r = torch.zeros_like(x_adv.detach().flatten(1))
+            # Whether a MEANINGFUL nearest-boundary candidate was located for
+            # this sample: `w` is a difference of logit gradients, and where
+            # it vanishes (a locally flat model) the clamp below is the only
+            # thing keeping `dist = |f| / ||w||` finite -- the resulting
+            # `r = (dist / ||w||) * w` is then an enormous step along a
+            # direction that carries no information. Gating on it keeps such
+            # a sample where it is, so the attack reports failure instead of
+            # a wild perturbation.
             found = torch.zeros(len(preds), dtype=torch.bool, device=inputs.device)
-            min_dist = torch.full((len(preds),), float("inf"), device=inputs.device)
+            min_dist = torch.full(
+                (len(preds),), float("inf"), device=inputs.device, dtype=inputs.dtype
+            )
             for c in range(n_classes):
                 w = grads[:, c] - g_pred  # (B, D)
                 f = logits[:, c] - f_pred  # (B,)
-                wn = w.norm(dim=1).clamp_min(1e-8)
+                raw_wn = w.norm(dim=1)
+                wn = raw_wn.clamp_min(1e-8)
                 dist = f.abs() / wn
-                take = (c != preds) & (dist < min_dist)
+                take = (c != preds) & (dist < min_dist) & (raw_wn > 1e-8)
                 r = (dist / wn)[:, None] * w
                 best_r = torch.where(take[:, None], r, best_r)
                 min_dist = torch.where(take, dist, min_dist)
-                found = found | (c != preds)
+                found = found | take
 
             step = self.overshoot * best_r.view_as(x_adv)
-            new = self._clamp(x_adv.detach() + step * active[:, None, None, None])
-            x_adv = new
+            # Rank-agnostic: `inputs` is not required to be an image batch.
+            moving = (active & found).view(expand).to(step.dtype)
+            x_adv = self._clamp(x_adv.detach() + step * moving)
 
             with torch.no_grad():
                 _, _, new_preds, _ = model(x_adv)
             active = active & (new_preds == preds)
 
-        x_adv = self._clamp(project_l2(x_adv.detach(), inputs, self.eps))
-        with torch.no_grad():
-            final_logits, _, final_preds, _ = model(x_adv)
+        candidate = self._clamp(project_l2(x_adv.detach(), inputs, self.eps))
+        # Success measured after the eps cap, and every failure returned
+        # clean, so a failed sample's reported norm is 0 rather than the cap
+        # -- see `finalise_minimum_norm` for why that consistency matters.
+        x_adv, success, final_logits = finalise_minimum_norm(
+            model, inputs, candidate, preds, clean_logits.detach()
+        )
+        delta = (x_adv - inputs).flatten(1)
 
         model.train(was_training)
         return AttackResult(
-            perturbed=x_adv.detach(),
-            effective_eps=(x_adv - inputs).abs().flatten(1).amax(dim=1).detach(),
+            perturbed=x_adv,
+            effective_eps=delta.abs().amax(dim=1).detach(),
             clean_preds=preds,
-            accepted_logits=final_logits.detach(),
-            l2_norm=(x_adv - inputs).flatten(1).norm(dim=1).detach(),
-            # Measured after the eps cap: a flip that only survives outside
-            # the reported budget is not a success inside it.
-            success=(final_preds.detach() != preds),
+            accepted_logits=final_logits,
+            l2_norm=delta.norm(dim=1).detach(),
+            success=success,
+            minimised_norm="l2",
         )
 
     def __call__(

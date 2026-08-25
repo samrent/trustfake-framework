@@ -6,13 +6,14 @@ without attacks.
 
 from torch import Tensor
 
-from trustfake.pipes.train import TrainingModule
+from trustfake.pipes.train._common import RobustValidationMixin
+from trustfake.pipes.train.abc import TrainingModule
 from trustfake.pydantic.model_output_schema import ClassificationModelOutput
 
 __all__ = ["StandardTrainingModule"]
 
 
-class StandardTrainingModule(TrainingModule):
+class StandardTrainingModule(RobustValidationMixin, TrainingModule):
     """Simple training module for classification.
 
     The module is designed for "classical" training.

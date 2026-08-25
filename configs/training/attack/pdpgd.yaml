@@ -1,19 +1,31 @@
 attack:
   _target_: trustfake.attacks.PDPGD
   # Minimum-norm attack: eps CAPS the result in `norm`, it does not drive
-  # the search. Read AttackResult.l2_norm, and success (the per-sample flag
-  # for whether the boundary was actually crossed inside the cap).
+  # the search. Read AttackResult.minimised (with minimised_norm naming the
+  # norm), and success (the per-sample flag for whether the boundary was
+  # actually crossed inside the cap). With norm=linf below, the minimised
+  # quantity is effective_eps and l2_norm is deliberately left unset --
+  # the L2 norm of an L_inf-minimised perturbation is a different number
+  # and does not belong on the same curve as the L2 attacks'.
+  # Aggregate ONLY over samples with success=True: a failed sample is
+  # returned clean and so reports a norm of 0.
   eps: 0.03137
   steps: 100
   # linf | l2 -- the norm being minimised.
   norm: linf
+  # Primal step size in INPUT units: the gradient is normalised to a unit
+  # step in `norm`, so nothing here scales with the model's logit scale.
   lr: 0.02
   lr_final: 0.01
   dual_lr: 0.1
   lam_init: 1.0
-  # Weight of the norm term against the margin term; the proximal threshold
-  # each step is lr * prox_weight. Raise it to shrink harder at the cost of
-  # crossing the boundary less often.
-  prox_weight: 0.05
+  # Fraction of the perturbation's OWN scale the proximal operator removes
+  # per step, before the lr schedule: the threshold is
+  # lr * prox_weight * scale(delta). Relative, not absolute -- an absolute
+  # threshold goes inert as soon as delta grows past it, which disables the
+  # norm-minimising half of the method while the run still looks healthy.
+  # Raise it to shrink harder at the cost of crossing the boundary less
+  # often.
+  prox_weight: 1.0
   clip_min: 0.0
   clip_max: 1.0

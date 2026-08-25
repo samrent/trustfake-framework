@@ -34,6 +34,7 @@ from torch import Tensor
 from torch.nn.functional import cross_entropy, kl_div, log_softmax, nll_loss, softmax
 
 from trustfake.attacks._common import model_logits, project_linf
+from trustfake.pipes.train._common import RobustValidationMixin, eval_mode
 from trustfake.pipes.train.abc import TrainingModule
 from trustfake.pipes.train.awp import AWPMixin
 from trustfake.pydantic.model_output_schema import ClassificationModelOutput
@@ -46,7 +47,7 @@ __all__ = [
 ]
 
 
-class _AdversarialTrainingBase(AWPMixin, TrainingModule):
+class _AdversarialTrainingBase(AWPMixin, RobustValidationMixin, TrainingModule):
     """Shared eps warm-up, inner-PGD scaffold and robust model selection."""
 
     def __init__(
@@ -56,15 +57,18 @@ class _AdversarialTrainingBase(AWPMixin, TrainingModule):
         steps: int = 10,
         alpha: float | None = None,
         eps_warmup_epochs: int = 0,
-        robust_val_steps: int = 0,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.eps = eps
         self.steps = steps
-        self.alpha = alpha if alpha is not None else 2.5 * eps / max(steps, 1)
+        # None means "use the standard rule", evaluated against whatever eps
+        # and step count are in force at the time. Storing a number here
+        # instead froze it against the CONSTRUCTOR's step count, which is the
+        # wrong one during robust validation (it runs fewer steps) and made
+        # the attack silently depend on whether eps warm-up happened to be on.
+        self._alpha_override = alpha
         self.eps_warmup_epochs = eps_warmup_epochs
-        self.robust_val_steps = robust_val_steps
 
     @property
     def current_eps(self) -> float:
@@ -72,23 +76,46 @@ class _AdversarialTrainingBase(AWPMixin, TrainingModule):
             return self.eps
         return self.eps * min(1.0, (self.current_epoch + 1) / self.eps_warmup_epochs)
 
+    @property
+    def alpha(self) -> float:
+        """PGD step size for the CURRENT eps and step count.
+
+        Derived rather than stored. The standard rule is 2.5*eps/steps
+        (Madry; RobustBench), and both inputs move: eps ramps under warm-up,
+        and `steps` is temporarily lowered during robust validation. A frozen
+        value silently means a different attack in each of those cases -- with
+        `robust_val_steps=3` against a training `steps=10` it cannot even
+        reach the ball boundary (3 x 0.25 eps = 0.75 eps), so the reported
+        robust accuracy is of a weaker attack than the one being trained on.
+        """
+        if self._alpha_override is not None:
+            return self._alpha_override
+        return 2.5 * self.current_eps / max(self.steps, 1)
+
     def _inner_pgd(self, inputs: Tensor, objective, eps: float) -> Tensor:
         """K-step PGD ascending `objective(x_adv) -> scalar` within the eps-ball,
-        from a random start. Returns a detached adversarial batch."""
+        from a random start. Returns a detached adversarial batch.
+
+        Runs with the model in eval mode. Every attack in `trustfake.attacks`
+        does; in train mode each of the k iterates would be folded into every
+        BatchNorm running estimate, and each forward would normalise by a
+        perturbed batch's statistics rather than the deployed ones.
+        """
         alpha = (
-            self.alpha
-            if self.eps_warmup_epochs <= 0
+            self._alpha_override
+            if self._alpha_override is not None
             else 2.5 * eps / max(self.steps, 1)
         )
         x_adv = inputs.detach() + torch.empty_like(inputs).uniform_(-eps, eps)
         x_adv = x_adv.clamp(0.0, 1.0)
-        for _ in range(self.steps):
-            x_adv = x_adv.clone().detach().requires_grad_(True)
-            with torch.enable_grad():
-                loss = objective(x_adv)
-                grad = torch.autograd.grad(loss, x_adv)[0]
-            x_adv = x_adv.detach() + alpha * grad.sign()
-            x_adv = project_linf(x_adv, inputs, eps).clamp(0.0, 1.0)
+        with eval_mode(self.model):
+            for _ in range(self.steps):
+                x_adv = x_adv.clone().detach().requires_grad_(True)
+                with torch.enable_grad():
+                    loss = objective(x_adv)
+                    grad = torch.autograd.grad(loss, x_adv)[0]
+                x_adv = x_adv.detach() + alpha * grad.sign()
+                x_adv = project_linf(x_adv, inputs, eps).clamp(0.0, 1.0)
         return x_adv.detach()
 
     def _pgd_ce(self, x: Tensor, y: Tensor, eps: float) -> Tensor:
@@ -100,39 +127,30 @@ class _AdversarialTrainingBase(AWPMixin, TrainingModule):
         return self._inner_pgd(x, objective, eps)
 
     def _output(self, x: Tensor) -> tuple[Tensor, ClassificationModelOutput]:
+        """A TRAINING forward: gradients flow and BatchNorm updates.
+
+        Use this only when the returned logits feed the loss. For a forward
+        whose output is reported rather than trained on, use
+        `_metrics_output`.
+        """
         logits, probs, preds, uncertainty = self.model.forward(x)
         return logits, ClassificationModelOutput(
             logits=logits, probs=probs, preds=preds, uncertainty=uncertainty
         )
 
-    def validation_step(self, batch: list[Tensor, Tensor], batch_idx: int) -> Tensor:
-        """Standard validation, plus robust accuracy when asked for.
+    def _metrics_output(self, x: Tensor) -> ClassificationModelOutput:
+        """A REPORTING forward: eval mode, no gradients, no BatchNorm update.
 
-        Selecting a defence arm on clean macro-F1 selects it on the thing it
-        deliberately trades away: the checkpoint kept is then the least
-        robust epoch that happened to fit the clean split best. Set
-        `robust_val_steps > 0` and point the checkpoint callback at
-        `val_robust_accuracy` to select each arm on what it actually
-        optimises. It costs one PGD run per validation batch, which is why it
-        is opt-in rather than always on.
+        Arms that train only on the adversarial batch still report their
+        metrics on the clean one. Running that report in train mode makes it
+        a second BatchNorm update per step on data the arm never trains on,
+        which quietly shifts the running statistics of the deployed model.
         """
-        loss = super().validation_step(batch, batch_idx)
-        if self.robust_val_steps > 0:
-            x, y = batch[0], batch[1].long()
-            steps, self.steps = self.steps, self.robust_val_steps
-            try:
-                x_adv = self._pgd_ce(x, y, self.current_eps)
-            finally:
-                self.steps = steps
-            with torch.no_grad():
-                preds = self.model(x_adv)[2]
-            self.log(
-                "val_robust_accuracy",
-                (preds.long() == y).float().mean(),
-                on_epoch=True,
-                prog_bar=False,
-            )
-        return loss
+        with torch.no_grad(), eval_mode(self.model):
+            logits, probs, preds, uncertainty = self.model.forward(x)
+        return ClassificationModelOutput(
+            logits=logits, probs=probs, preds=preds, uncertainty=uncertainty
+        )
 
 
 class PGDAdversarialTrainingModule(_AdversarialTrainingBase):
@@ -149,8 +167,7 @@ class PGDAdversarialTrainingModule(_AdversarialTrainingBase):
         adv_logits = model_logits(self.model, x_adv)
         loss = self.model.loss_fn(adv_logits, y)
 
-        _, clean_output = self._output(x)
-        return loss, clean_output
+        return loss, self._metrics_output(x)
 
 
 class TRADESTrainingModule(_AdversarialTrainingBase):
@@ -165,14 +182,31 @@ class TRADESTrainingModule(_AdversarialTrainingBase):
         super().__init__(*args, **kwargs)
         self.beta = beta
 
+    def awp_objective(self, inputs: Tensor, x_adv: Tensor, targets: Tensor) -> Tensor:
+        """The TRADES loss, not cross-entropy.
+
+        The published TRADES-AWP (`utils_awp.py::TradesAWP.calc_awp`) ascends
+        the full TRADES objective; ascending CE instead measures a different
+        modifier from the one the literature calls "AWP on top of TRADES".
+        """
+        clean_logits = model_logits(self.model, inputs)
+        adv_logp = log_softmax(model_logits(self.model, x_adv), dim=1)
+        return cross_entropy(clean_logits, targets.long()) + self.beta * kl_div(
+            adv_logp,
+            log_softmax(clean_logits, dim=1),
+            log_target=True,
+            reduction="batchmean",
+        )
+
     def compute_loss(
         self, batch: list[Tensor, Tensor]
     ) -> tuple[Tensor, ClassificationModelOutput]:
         x, y = batch[0], batch[1].long()
         eps = self.current_eps
 
-        # Reference for the inner maximisation, at the current weights.
-        with torch.no_grad():
+        # Reference for the inner maximisation, at the current weights. Eval
+        # mode: this forward exists to steer the attack, not to train on.
+        with torch.no_grad(), eval_mode(self.model):
             reference_logp = log_softmax(model_logits(self.model, x), dim=1)
 
         def objective(x_adv: Tensor) -> Tensor:
@@ -217,6 +251,17 @@ class HybridAdversarialTrainingModule(_AdversarialTrainingBase):
         super().__init__(*args, **kwargs)
         self.beta = beta
 
+    def awp_objective(self, inputs: Tensor, x_adv: Tensor, targets: Tensor) -> Tensor:
+        """The AT+KL loss, so the weight adversary attacks what is trained."""
+        clean_logits = model_logits(self.model, inputs)
+        adv_logits = model_logits(self.model, x_adv)
+        return cross_entropy(adv_logits, targets.long()) + self.beta * kl_div(
+            log_softmax(adv_logits, dim=1),
+            log_softmax(clean_logits.detach(), dim=1),
+            log_target=True,
+            reduction="batchmean",
+        )
+
     def compute_loss(
         self, batch: list[Tensor, Tensor]
     ) -> tuple[Tensor, ClassificationModelOutput]:
@@ -260,6 +305,36 @@ class MARTTrainingModule(_AdversarialTrainingBase):
         super().__init__(*args, **kwargs)
         self.beta = beta
 
+    def _mart_loss(
+        self, clean_logits: Tensor, adv_logits: Tensor, targets: Tensor
+    ) -> Tensor:
+        """MART's objective, shared by training and the weight adversary."""
+        adv_probs = softmax(adv_logits, dim=1)
+        # Runner-up class: the second-largest probability, or the largest
+        # when the top one is already the true class.
+        top2 = adv_probs.argsort(dim=1)[:, -2:]
+        runner_up = torch.where(top2[:, -1] == targets, top2[:, -2], top2[:, -1])
+        boosted = cross_entropy(adv_logits, targets) + nll_loss(
+            torch.log(1.0001 - adv_probs + 1e-12), runner_up
+        )
+
+        clean_probs = softmax(clean_logits, dim=1)
+        true_prob = clean_probs.gather(1, targets[:, None]).squeeze(1)
+        per_sample_kl = kl_div(
+            torch.log(adv_probs + 1e-12), clean_probs, reduction="none"
+        ).sum(dim=1)
+        # Weight by how unsure the model already was: 1 - p_y(clean).
+        weighted_kl = (per_sample_kl * (1.0000001 - true_prob)).mean()
+        return boosted + self.beta * weighted_kl
+
+    def awp_objective(self, inputs: Tensor, x_adv: Tensor, targets: Tensor) -> Tensor:
+        """The MART loss, so the weight adversary attacks what is trained."""
+        return self._mart_loss(
+            model_logits(self.model, inputs),
+            model_logits(self.model, x_adv),
+            targets.long(),
+        )
+
     def compute_loss(
         self, batch: list[Tensor, Tensor]
     ) -> tuple[Tensor, ClassificationModelOutput]:
@@ -270,22 +345,5 @@ class MARTTrainingModule(_AdversarialTrainingBase):
         adv_logits = model_logits(self.model, x_adv)
         clean_logits, clean_output = self._output(x)
 
-        adv_probs = softmax(adv_logits, dim=1)
-        # Runner-up class: the second-largest probability, or the largest
-        # when the top one is already the true class.
-        top2 = adv_probs.argsort(dim=1)[:, -2:]
-        runner_up = torch.where(top2[:, -1] == y, top2[:, -2], top2[:, -1])
-        boosted = cross_entropy(adv_logits, y) + nll_loss(
-            torch.log(1.0001 - adv_probs + 1e-12), runner_up
-        )
-
-        clean_probs = softmax(clean_logits, dim=1)
-        true_prob = clean_probs.gather(1, y[:, None]).squeeze(1)
-        per_sample_kl = kl_div(
-            torch.log(adv_probs + 1e-12), clean_probs, reduction="none"
-        ).sum(dim=1)
-        # Weight by how unsure the model already was: 1 - p_y(clean).
-        weighted_kl = (per_sample_kl * (1.0000001 - true_prob)).mean()
-
-        loss = boosted + self.beta * weighted_kl
+        loss = self._mart_loss(clean_logits, adv_logits, y)
         return loss, clean_output

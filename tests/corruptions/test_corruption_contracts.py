@@ -38,9 +38,12 @@ CORRUPTION_IDS = [corruption.name for corruption in CORRUPTIONS]
 
 @pytest.fixture(params=CORRUPTIONS, ids=CORRUPTION_IDS)
 def corruption(request):
-    # A fresh instance per test: GaussianNoise carries a generator that
-    # advances across calls, so a shared one would make these tests
-    # order-dependent.
+    # A fresh instance per test. No corruption here carries state across
+    # calls any more (GaussianNoise re-seeds inside `corrupt`), so this is
+    # belt and braces rather than a requirement -- but a condition that
+    # quietly grew a stream would otherwise make these tests
+    # order-dependent, which is precisely the bug the contract below exists
+    # to catch.
     return copy.deepcopy(request.param)
 
 
@@ -142,9 +145,16 @@ def test_run_matches_call(corruption, images):
     `run`, adversarial training uses `__call__`, and a divergence would make
     the two report different conditions under one name."""
     first = corruption.run(None, images).perturbed
-    if hasattr(corruption, "reset"):  # stochastic condition: same draw twice
-        corruption.reset()
     assert torch.equal(first, corruption(None, images))
+
+
+def test_is_a_pure_function_of_its_input(corruption, images):
+    """Every condition -- stochastic ones included -- must return the same
+    tensor for the same input, however many times it has been called. A
+    condition carrying an advancing RNG across calls makes a second
+    `trainer.test()` on the same eval module report a different number for
+    the same model, data and condition, with nothing anywhere to say so."""
+    assert torch.equal(corruption(None, images), corruption(None, images))
 
 
 def test_survives_a_deepcopy(corruption, images):
@@ -164,6 +174,11 @@ def test_survives_a_deepcopy(corruption, images):
         (Downscale, {"factor": 0.5}),
         (GaussianNoise, {"sigma": -0.1}),
         (GaussianBlur, {"sigma": 0.0}),
+        # No-op parameterisations: an out-of-range parameter is obviously
+        # wrong, but these are worse -- they run, they succeed, and they
+        # file the CLEAN row under a corruption's metric prefix.
+        (Downscale, {"factor": 1.0}),
+        (GaussianNoise, {"sigma": 0.0}),
     ],
 )
 def test_rejects_a_meaningless_parameter(factory, kwargs):

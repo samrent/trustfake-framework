@@ -263,6 +263,65 @@ def test_datamodule_matched_filter_kills_the_signal_in_the_test_split(sid_set_di
     assert len(set(rates.values())) == 1
 
 
+@pytest.fixture
+def sid_set_dir_all_fakes_square(tmp_path):
+    """Real SID-Set's actual shape, in miniature: EVERY fake is square and
+    only some reals are, so `nonsquare` keeps a handful of rows that are all
+    label 0. On the real data that is 569 rows, all real."""
+
+    def rows(prefix):
+        out = []
+        for j in range(ROWS_PER_SHARD):
+            label = j % 3
+            square = True if label else (j % 6 != 0)
+            size = (64, 64) if square else (64, 48)
+            out.append((f"{prefix}_{j}", label, _png_bytes(*size)))
+        return out
+
+    for i in range(2):
+        _write_shard(tmp_path / f"train-{i:05d}-of-00002.parquet", rows(f"t{i}"))
+    for i in range(3):
+        _write_shard(tmp_path / f"validation-{i:05d}-of-00003.parquet", rows(f"v{i}"))
+    return tmp_path
+
+
+def test_datamodule_refuses_a_single_class_filtered_role(sid_set_dir_all_fakes_square):
+    """The silent one. `nonsquare` on SID-Set strips essentially every fake,
+    and the unequal-rate warning cannot fire on a one-class subset (a single
+    rate is trivially equal to itself), so nothing said anything -- while
+    macro accuracy was capped at 1/3, detection AUROC was NaN, and on calib
+    the moderation thresholds were fitted with zero fakes."""
+    with pytest.raises(ValueError, match="SINGLE class"):
+        _datamodule(sid_set_dir_all_fakes_square, geometry_filter="nonsquare").setup()
+
+
+def test_the_single_class_refusal_names_what_is_missing(sid_set_dir_all_fakes_square):
+    """The message has to be actionable on its own: a run dies inside
+    `setup()`, hours from the person reading the log."""
+    with pytest.raises(ValueError) as caught:
+        _datamodule(sid_set_dir_all_fakes_square, geometry_filter="nonsquare").setup()
+
+    message = str(caught.value)
+    assert "nonsquare" in message
+    assert "all of label [0]" in message
+    assert "missing [1, 2]" in message
+    assert "matched" in message  # the filter that does not empty a class
+
+
+def test_a_multi_class_filtered_role_is_still_accepted(sid_set_dir):
+    """The guard must not fire on a subset that is merely small: this
+    fixture keeps both geometries in every class, so `nonsquare` is a
+    genuine controlled subset and has to survive."""
+    dm = _datamodule(sid_set_dir, geometry_filter="nonsquare")
+    dm.setup()
+
+    hf = dm.test_dataset.hf_dataset
+    labels = {int(hf[index]["label"]) for index in range(len(hf))}
+
+    assert len(labels) > 1
+    assert len(dm.calib_dataset) > 0
+
+
 def test_datamodule_rejects_an_unknown_filter(sid_set_dir):
     with pytest.raises(ValueError, match="Unknown geometry_filter"):
         _datamodule(sid_set_dir, geometry_filter="squarish")
