@@ -37,6 +37,9 @@ class CarliniWagner(AdversarialAttack):
         clip_min, clip_max (float): Valid input range.
     """
 
+    norm = "l2"
+    minimum_norm = True
+
     def __init__(
         self,
         eps: float = 0.5,
@@ -111,7 +114,7 @@ class CarliniWagner(AdversarialAttack):
 
         best = self._clamp(project_l2(best.detach(), inputs, self.eps))
         with torch.no_grad():
-            final_logits = model_logits(model, best)
+            final_logits, _, final_preds, _ = model(best)
 
         model.train(was_training)
         return AttackResult(
@@ -119,6 +122,10 @@ class CarliniWagner(AdversarialAttack):
             effective_eps=(best - inputs).abs().flatten(1).amax(dim=1).detach(),
             clean_preds=preds,
             accepted_logits=final_logits.detach(),
+            l2_norm=(best - inputs).flatten(1).norm(dim=1).detach(),
+            # Measured after the eps cap: a flip that only survives outside
+            # the reported budget is not a success inside it.
+            success=(final_preds.detach() != preds),
         )
 
     def __call__(

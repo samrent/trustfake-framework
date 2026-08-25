@@ -2,7 +2,12 @@ import torch
 from torch.nn.functional import cross_entropy
 
 from trustfake.attacks._common import model_logits, project_linf
-from trustfake.attacks.abc import AdversarialAttack, AttackResult
+from trustfake.attacks.abc import (
+    AdversarialAttack,
+    AttackDirection,
+    AttackFamily,
+    AttackResult,
+)
 from trustfake.models.wrapper import TrustFakeWrapper
 
 __all__ = ["ParamACE"]
@@ -46,6 +51,11 @@ class ParamACE(AdversarialAttack):
         steps (int): Number of ascent steps.
         clip_min, clip_max (float): Valid input range.
     """
+
+    family = AttackFamily.CONFIDENCE
+    direction = AttackDirection.BOTH
+    # omega='true' requires ground truth; the other omega modes do not.
+    uses_labels = True
 
     def __init__(
         self,

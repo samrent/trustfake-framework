@@ -18,14 +18,23 @@ class FGSM(AdversarialAttack):
     Args:
         eps (float): Maximum L_inf perturbation size, in the same units as
             `inputs` (e.g. 8/255 for [0, 1]-scaled images).
+        use_labels (bool): Attack the supplied ground truth instead of the
+            model's own clean prediction. A strictly stronger threat model --
+            the attacker is assumed to know the answer -- so a row produced
+            this way is a different attack, not a variant of the same one.
         clip_min (float): Minimum valid value for a perturbed input.
         clip_max (float): Maximum valid value for a perturbed input.
     """
 
     def __init__(
-        self, eps: float = 8 / 255, clip_min: float = 0.0, clip_max: float = 1.0
+        self,
+        eps: float = 8 / 255,
+        use_labels: bool = False,
+        clip_min: float = 0.0,
+        clip_max: float = 1.0,
     ):
         super().__init__(eps=eps, clip_min=clip_min, clip_max=clip_max)
+        self.uses_labels = use_labels
 
     @property
     def name(self) -> str:
@@ -49,8 +58,9 @@ class FGSM(AdversarialAttack):
 
             logits, _, preds, _ = model(x)
 
-            # Avoid label leaking: attack the model's own prediction.
-            targets = preds.detach()
+            if not self.uses_labels or targets is None:
+                # Avoid label leaking: attack the model's own prediction.
+                targets = preds.detach()
 
             loss = model.loss_fn(logits, targets.long())
             grad = torch.autograd.grad(loss, x)[0]

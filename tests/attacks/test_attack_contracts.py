@@ -20,7 +20,11 @@ from trustfake.attacks import (
     ACE,
     BIM,
     FGSM,
+    PDPGD,
     PGD,
+    PGDL2,
+    AdaptiveAutoAttack,
+    BrendelBethge,
     CarliniWagner,
     DeepFool,
     OverConfidence,
@@ -35,20 +39,28 @@ CLIP_MIN, CLIP_MAX = 0.0, 1.0
 
 # Native, deterministic attacks: every one gets the full contract battery.
 # The autoattack-package wrappers (APGD/FAB/Square/AutoAttack) are slower and
-# tested separately in test_autoattack_wrappers.py. For the two min-norm
-# attacks (DeepFool, C&W) eps is an L2 cap, which also satisfies L_inf <= eps.
+# tested separately in test_autoattack_wrappers.py. For the minimum-norm
+# attacks (DeepFool, C&W, BB) and PGD-L2, eps is an L2 cap, which also
+# satisfies L_inf <= eps -- so they belong in this battery even though the
+# budget means something different for them.
 ATTACKS = [
     FGSM(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     UncertaintyFGSM(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     ACE(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     ParamACE(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     PGD(eps=EPS, steps=5, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    PGDL2(eps=EPS, steps=5, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     BIM(eps=EPS, steps=5, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     DeepFool(eps=EPS, steps=20, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     CarliniWagner(eps=EPS, steps=30, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    BrendelBethge(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    PDPGD(eps=EPS, steps=20, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     OverConfidence(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     UnderConfidence(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     TrustRegion(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    AdaptiveAutoAttack(
+        eps=EPS, steps=12, rounds=2, clip_min=CLIP_MIN, clip_max=CLIP_MAX
+    ),
 ]
 
 ATTACK_IDS = [attack.name for attack in ATTACKS]
@@ -136,16 +148,33 @@ def test_perturbation_is_nonzero(attack, model, inputs, targets):
 
 @pytest.mark.parametrize(
     "attack_cls",
-    [FGSM, UncertaintyFGSM, ACE, ParamACE, PGD, BIM, DeepFool, CarliniWagner],
+    [
+        FGSM,
+        UncertaintyFGSM,
+        ACE,
+        ParamACE,
+        PGD,
+        PGDL2,
+        BIM,
+        DeepFool,
+        CarliniWagner,
+        BrendelBethge,
+        PDPGD,
+        AdaptiveAutoAttack,
+    ],
     ids=[
         "fgsm",
         "uncertainty_fgsm",
         "ace",
         "param_ace",
         "pgd",
+        "pgd_l2",
         "bim",
         "deepfool",
         "cw",
+        "bb",
+        "pdpgd",
+        "a3",
     ],
 )
 def test_zero_epsilon_returns_input_unchanged(attack_cls, model, inputs, targets):

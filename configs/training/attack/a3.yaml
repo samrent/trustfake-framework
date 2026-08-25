@@ -1,0 +1,16 @@
+attack:
+  _target_: trustfake.attacks.AdaptiveAutoAttack
+  eps: 0.03137
+  # Total inner iterations across all rounds. Online Statistics-based
+  # Discarding redistributes this budget onto the still-unsolved samples; it
+  # does not add to it.
+  steps: 100
+  # Adaptive Direction Initialization rounds. Each re-initialises the
+  # unsolved samples, from round 2 on including directions that already
+  # worked on other samples in the batch.
+  rounds: 3
+  n_random_init: 6
+  momentum: 0.75
+  seed: 0
+  clip_min: 0.0
+  clip_max: 1.0

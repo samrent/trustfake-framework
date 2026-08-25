@@ -1,0 +1,19 @@
+attack:
+  _target_: trustfake.attacks.PDPGD
+  # Minimum-norm attack: eps CAPS the result in `norm`, it does not drive
+  # the search. Read AttackResult.l2_norm, and success (the per-sample flag
+  # for whether the boundary was actually crossed inside the cap).
+  eps: 0.03137
+  steps: 100
+  # linf | l2 -- the norm being minimised.
+  norm: linf
+  lr: 0.02
+  lr_final: 0.01
+  dual_lr: 0.1
+  lam_init: 1.0
+  # Weight of the norm term against the margin term; the proximal threshold
+  # each step is lr * prox_weight. Raise it to shrink harder at the cost of
+  # crossing the boundary less often.
+  prox_weight: 0.05
+  clip_min: 0.0
+  clip_max: 1.0

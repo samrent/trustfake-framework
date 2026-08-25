@@ -1,6 +1,6 @@
 import torch
 
-from trustfake.attacks.abc import AdversarialAttack
+from trustfake.attacks.abc import AdversarialAttack, AttackFamily
 from trustfake.models.wrapper import TrustFakeWrapper
 
 __all__ = ["UncertaintyFGSM"]
@@ -27,6 +27,8 @@ class UncertaintyFGSM(AdversarialAttack):
         clip_min (float): Minimum valid value for a perturbed input.
         clip_max (float): Maximum valid value for a perturbed input.
     """
+
+    family = AttackFamily.UNCERTAINTY
 
     def __init__(
         self, eps: float = 8 / 255, clip_min: float = 0.0, clip_max: float = 1.0

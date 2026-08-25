@@ -1,0 +1,16 @@
+attack:
+  _target_: trustfake.attacks.PGDL2
+  # L2 budget, NOT L_inf: an L2 ball of this radius permits a single pixel
+  # to move by the whole radius, so this row is not comparable to an L_inf
+  # row at the same number. Reported because robustness does not transfer
+  # between norms -- a detector hardened against L_inf can be undefended
+  # against L2 at comparable perceptual size.
+  eps: 0.5
+  steps: 20
+  random_start: true
+  # Attack the model's own clean prediction (false) or the ground truth
+  # (true). True is a strictly stronger threat model and a different row.
+  use_labels: false
+  seed: 0
+  clip_min: 0.0
+  clip_max: 1.0

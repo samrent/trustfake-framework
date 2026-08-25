@@ -1,0 +1,18 @@
+attack:
+  _target_: trustfake.attacks.BrendelBethge
+  # Minimum-norm attack: eps is an L2 CAP on the answer, not the search
+  # budget. The number to read off a run is AttackResult.l2_norm (the norm
+  # the attack actually minimised), not eps.
+  eps: 0.5
+  steps: 100
+  # Random starting points tried per sample, on top of the deterministic
+  # ones (another batch sample, the two constant corner images).
+  init_candidates: 8
+  init_search_steps: 10
+  # Trust-region radius as a fraction of the remaining distance to the clean
+  # input. Lower tracks the boundary more closely and costs more steps.
+  lr: 0.2
+  margin: 0.001
+  seed: 0
+  clip_min: 0.0
+  clip_max: 1.0

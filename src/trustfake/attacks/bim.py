@@ -23,6 +23,8 @@ class BIM(AdversarialAttack):
         eps (float): L_inf budget.
         alpha (float | None): Step size. Defaults to eps / steps.
         steps (int): Number of gradient steps.
+        use_labels (bool): Attack the supplied ground truth instead of the
+            model's own clean prediction -- a strictly stronger threat model.
         clip_min, clip_max (float): Valid input range.
     """
 
@@ -31,12 +33,14 @@ class BIM(AdversarialAttack):
         eps: float = 8 / 255,
         alpha: float | None = None,
         steps: int = 10,
+        use_labels: bool = False,
         clip_min: float = 0.0,
         clip_max: float = 1.0,
     ):
         super().__init__(eps=eps, clip_min=clip_min, clip_max=clip_max)
         self.alpha = alpha if alpha is not None else eps / max(steps, 1)
         self.steps = steps
+        self.uses_labels = use_labels
 
     @property
     def name(self) -> str:
@@ -51,8 +55,9 @@ class BIM(AdversarialAttack):
         was_training = model.training
         model.eval()
 
-        with torch.no_grad():
-            targets = model(inputs)[2].detach()
+        if not self.uses_labels or targets is None:
+            with torch.no_grad():
+                targets = model(inputs)[2].detach()
 
         x_adv = inputs.clone().detach()
         for _ in range(self.steps):

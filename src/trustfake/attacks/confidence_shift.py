@@ -11,7 +11,7 @@ import torch
 from torch.nn.functional import cross_entropy, kl_div, log_softmax
 
 from trustfake.attacks._common import model_logits, project_linf
-from trustfake.attacks.abc import AdversarialAttack
+from trustfake.attacks.abc import AdversarialAttack, AttackDirection, AttackFamily
 from trustfake.models.wrapper import TrustFakeWrapper
 
 __all__ = ["OverConfidence", "UnderConfidence"]
@@ -20,6 +20,8 @@ __all__ = ["OverConfidence", "UnderConfidence"]
 class _ConfidenceShift(AdversarialAttack):
     """Shared PGD scaffold; subclasses supply the per-step objective on the
     frozen clean prediction. Both descend their loss (minimise)."""
+
+    family = AttackFamily.CONFIDENCE
 
     def __init__(
         self,
@@ -68,6 +70,8 @@ class OverConfidence(_ConfidenceShift):
     an accuracy monitor sees a healthy system.
     """
 
+    direction = AttackDirection.OVER
+
     @property
     def name(self) -> str:
         return "overconf"
@@ -83,6 +87,8 @@ class UnderConfidence(_ConfidenceShift):
     but it is NOT label-preserving by construction, so preservation is measured
     (via AttackResult), not assumed.
     """
+
+    direction = AttackDirection.UNDER
 
     @property
     def name(self) -> str:

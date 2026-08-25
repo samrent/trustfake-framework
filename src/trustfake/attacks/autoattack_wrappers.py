@@ -111,6 +111,7 @@ class FAB(_AutoAttackBase):
     """Fast Adaptive Boundary attack (Croce & Hein, ICML 2020). Minimum-norm;
     ``eps`` bounds the reported perturbation."""
 
+    minimum_norm = True
     _attacks_to_run = ["fab"]
 
     @property
