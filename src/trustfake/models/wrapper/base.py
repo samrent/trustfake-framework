@@ -25,10 +25,25 @@ class BaseWrapper(TrustFakeWrapper):
         self.uncertainty_score = self.uncertainty_score.to(x.device)
         x = self.normalization_layer(x)
         logits = self.model(x)
-        probs = torch.softmax(logits, dim=1)
+        probs = torch.softmax(logits / self.temperature, dim=1)
         preds = torch.argmax(probs, dim=1)
 
         uncertainty = self.uncertainty_score(probs)
         self.uncertainty_score.reset()
 
+        return logits, probs, preds, uncertainty
+
+    def outputs_from_logits(
+        self, logits: Tensor
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """
+        Derive (logits, probs, preds, uncertainty) from a single forward's
+        logits -- exactly the post-model half of `forward`, which is why
+        this wrapper can offer it and a stochastic one cannot.
+        """
+        self.uncertainty_score = self.uncertainty_score.to(logits.device)
+        probs = torch.softmax(logits / self.temperature, dim=1)
+        preds = torch.argmax(probs, dim=1)
+        uncertainty = self.uncertainty_score(probs)
+        self.uncertainty_score.reset()
         return logits, probs, preds, uncertainty

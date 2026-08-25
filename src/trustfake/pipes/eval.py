@@ -2,6 +2,7 @@ import os
 from abc import ABC
 
 import lightning as pl
+import numpy as np
 import torch
 from torchmetrics import Metric, MetricCollection
 from torchmetrics.classification import (
@@ -11,11 +12,13 @@ from torchmetrics.classification import (
 
 from trustfake.attacks import AdversarialAttack
 from trustfake.logging import get_logger
+from trustfake.metrics.calibration import get_calibration_metrics
 from trustfake.metrics.evaluation import (
     get_failure_detection_metrics,
     get_multiclass_classification_metrics,
     get_selective_classification_metrics,
 )
+from trustfake.metrics.moderation import ModerationPolicy
 from trustfake.models.wrapper import TrustFakeWrapper
 from trustfake.pydantic.model_output_schema import (
     ClassificationModelOutput,
@@ -44,6 +47,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         model_output_schema_cls: ClassificationModelOutput,
         num_classes: int,
         attack: AdversarialAttack | None = None,
+        moderation_policy: ModerationPolicy | None = None,
     ):
         """
         Args:
@@ -64,6 +68,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         self._model_output_schema_cls = model_output_schema_cls
         self._num_classes = num_classes
         self.attack = attack
+        self.moderation_policy = moderation_policy
 
         # Classification metrics
         self.nat_classification_metrics = self.classification_metrics.clone(
@@ -80,10 +85,15 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self.selective_classification_metrics.clone(prefix="nat_")
         )
 
+        # Calibration metrics (ECE / NLL / Brier)
+        self.nat_calibration_metrics = self.calibration_metrics.clone(prefix="nat_")
+
         self._storage: dict[str, dict[str, list]] = {
             "nat": {
                 "uncertainties": [],
                 "errors": [],
+                "probs": [],
+                "targets": [],
             },
         }
 
@@ -98,9 +108,12 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self.adv_selective_classification_metrics = (
                 self.selective_classification_metrics.clone(prefix=prefix)
             )
+            self.adv_calibration_metrics = self.calibration_metrics.clone(prefix=prefix)
             self._storage[f"{self.attack.name}"] = {
                 "uncertainties": [],
                 "errors": [],
+                "probs": [],
+                "targets": [],
             }
 
     def training_step(self, batch, batch_idx):
@@ -128,12 +141,14 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         self.nat_roc_curve.to(self.device)
         self.nat_fd_metrics.to(self.device)
         self.nat_selective_classification_metrics.to(self.device)
+        self.nat_calibration_metrics.to(self.device)
         if self.attack is not None:
             self.adv_classification_metrics.to(self.device)
             self.adv_cm.to(self.device)
             self.adv_roc_curve.to(self.device)
             self.adv_fd_metrics.to(self.device)
             self.adv_selective_classification_metrics.to(self.device)
+            self.adv_calibration_metrics.to(self.device)
 
     def _run_model(self, inputs: torch.Tensor):
         logits, probs, preds, uncertainty = self.model(inputs)
@@ -148,16 +163,20 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         classification_metrics: MetricCollection,
         failure_detection_metrics: MetricCollection,
         selective_classification_metrics: MetricCollection,
+        calibration_metrics: MetricCollection,
         cm: Metric,
         roc_curve: Metric,
         storage_key: str,
+        output: ClassificationModelOutput | None = None,
     ):
         """
-        Runs the model on `inputs`, updates the given metric collections against
-            `targets`, and stores the per-sample errors/uncertainty under
-            `self._storage[storage_key]`.
+        Runs the model on `inputs` (unless a precomputed `output` is given,
+            e.g. derived from an attack's accept-check forward), updates the
+            given metric collections against `targets`, and stores the
+            per-sample errors/uncertainty under `self._storage[storage_key]`.
         """
-        output = self._run_model(inputs)
+        if output is None:
+            output = self._run_model(inputs)
         classification_metrics.update(output.preds.long(), targets.long())
         cm.update(output.preds.long(), targets.long())
         roc_curve.update(output.probs, targets.long())
@@ -168,12 +187,15 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         selective_classification_metrics.update(
             output.probs, targets.long(), output.uncertainty
         )
+        calibration_metrics.update(output.probs, targets.long())
 
         # --- Storage for post-hoc analysis ---
         self._storage[storage_key]["uncertainties"].append(
             output.uncertainty.detach().cpu()
         )
         self._storage[storage_key]["errors"].append(errors.detach().cpu())
+        self._storage[storage_key]["probs"].append(output.probs.detach().cpu())
+        self._storage[storage_key]["targets"].append(targets.detach().cpu())
 
     def test_step(self, batch: list[torch.Tensor, torch.Tensor], batch_idx):
         """
@@ -195,6 +217,7 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             self.nat_classification_metrics,
             self.nat_fd_metrics,
             self.nat_selective_classification_metrics,
+            self.nat_calibration_metrics,
             self.nat_cm,
             self.nat_roc_curve,
             storage_key="nat",
@@ -202,17 +225,64 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
 
         if self.attack is not None:
             with torch.enable_grad():
-                perturbed_inputs = self.attack(self.model, inputs, targets)
+                result = self.attack.run(self.model, inputs, targets)
+
+            # Prefer the logits from the attack's accept-check forward: a
+            # re-forward on the perturbed batch is not always bit-identical
+            # (batch-shape-dependent backends), so a boundary sample can
+            # flip and misreport quantities the attack guarantees. Falls
+            # back to a re-forward when the wrapper cannot derive its
+            # uncertainty from a single forward (e.g. MC dropout).
+            adv_output = None
+            if result.accepted_logits is not None:
+                derived = self.model.outputs_from_logits(result.accepted_logits)
+                if derived is not None:
+                    logits, probs, preds, uncertainty = derived
+                    adv_output = self._model_output_schema_cls(
+                        logits=logits,
+                        probs=probs,
+                        preds=preds,
+                        uncertainty=uncertainty,
+                    )
+                else:
+                    logger.warning(
+                        f"{self.attack.name} supplied accepted logits, but "
+                        f"{type(self.model).__name__} cannot derive its "
+                        "uncertainty from a single forward; re-running the "
+                        "model on the perturbed batch instead."
+                    )
+
             self._evaluate(
-                perturbed_inputs,
+                result.perturbed,
                 targets,
                 self.adv_classification_metrics,
                 self.adv_fd_metrics,
                 self.adv_selective_classification_metrics,
+                self.adv_calibration_metrics,
                 self.adv_cm,
                 self.adv_roc_curve,
                 storage_key=self.attack.name,
+                output=adv_output,
             )
+            self._log_attack_metadata(result)
+
+    def _log_attack_metadata(self, result) -> None:
+        """
+        Log what the attack itself measured: label preservation against the
+        clean prediction (from the accept-check forward when present -- for
+        ACE this is exactly 1.0 by construction), and the mean per-sample
+        L_inf perturbation actually applied.
+        """
+        prefix = f"{self.attack.name}_"
+        if result.accepted_logits is not None and result.clean_preds is not None:
+            preservation = (
+                (result.accepted_logits.argmax(dim=1) == result.clean_preds)
+                .float()
+                .mean()
+            )
+            self.log(prefix + "label_preservation", preservation)
+        if result.effective_eps is not None:
+            self.log(prefix + "effective_eps_mean", result.effective_eps.mean())
 
     def on_test_epoch_end(self):
         """
@@ -235,6 +305,9 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         )
         self.log_dict(nat_selective_classification_metrics)
         self.nat_selective_classification_metrics.reset()
+        nat_calibration_metrics = self.nat_calibration_metrics.compute()
+        self.log_dict(nat_calibration_metrics)
+        self.nat_calibration_metrics.reset()
 
         if self.attack is not None:
             adv_classification_metrics = self.adv_classification_metrics.compute()
@@ -259,13 +332,52 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             )
             self.log_dict(adv_selective_classification_metrics)
             self.adv_selective_classification_metrics.reset()
+            adv_calibration_metrics = self.adv_calibration_metrics.compute()
+            self.log_dict(adv_calibration_metrics)
+            self.adv_calibration_metrics.reset()
+
+        # Selective moderation (WP4): apply the frozen policy per condition.
+        self._log_moderation()
 
         # Save storage to disk for post-hoc analysis
         self._save_storage_to_disk()
         # Clear storage after saving to disk to free up memory
         for key in self._storage:
-            self._storage[key]["uncertainties"] = []
-            self._storage[key]["errors"] = []
+            for field in self._storage[key]:
+                self._storage[key][field] = []
+
+    def _log_moderation(self) -> None:
+        """Apply the frozen moderation policy to each stored condition and log
+        the deployment indicators. The uncertainty gate (two-axis rule) is
+        reported alongside when the policy carries a t_unc."""
+        if self.moderation_policy is None:
+            return
+        for key, store in self._storage.items():
+            if not store["probs"]:
+                continue
+            probs = torch.cat(store["probs"]).numpy()
+            targets = torch.cat(store["targets"]).numpy()
+            uncertainty = torch.cat(store["uncertainties"]).numpy()
+            prefix = "nat" if key == "nat" else self.attack.name
+            r = self.moderation_policy.evaluate(probs, targets)
+            for name in (
+                "coverage",
+                "review_rate",
+                "residual_risk",
+                "missed_fake_rate",
+                "false_flag_rate",
+            ):
+                value = r[name]
+                if value is not None and not np.isnan(value):
+                    self.log(f"{prefix}_moderation_{name}", float(value))
+            if self.moderation_policy.t_unc is not None:
+                r2 = self.moderation_policy.evaluate(
+                    probs, targets, uncertainty, use_gate=True
+                )
+                for name in ("review_rate", "residual_risk"):
+                    value = r2[name]
+                    if value is not None and not np.isnan(value):
+                        self.log(f"{prefix}_moderation_2axis_{name}", float(value))
 
     def _save_storage_to_disk(self):
         """
@@ -281,20 +393,10 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             return
         os.makedirs(log_dir, exist_ok=True)
         for key in self._storage:
-            self._storage[key]["uncertainties"] = torch.cat(
-                self._storage[key]["uncertainties"], dim=0
-            )
-            self._storage[key]["errors"] = torch.cat(
-                self._storage[key]["errors"], dim=0
-            )
+            uncertainties = torch.cat(self._storage[key]["uncertainties"], dim=0)
+            errors = torch.cat(self._storage[key]["errors"], dim=0)
             path = os.path.join(log_dir, f"storage_{key}.pt")
-            torch.save(
-                {
-                    "uncertainties": self._storage[key]["uncertainties"],
-                    "errors": self._storage[key]["errors"],
-                },
-                path,
-            )
+            torch.save({"uncertainties": uncertainties, "errors": errors}, path)
 
     @property
     def classification_metrics(self) -> MetricCollection:
@@ -340,6 +442,16 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
             MetricCollection: A collection of metrics to be used for failure detection.
         """
         return get_failure_detection_metrics()
+
+    @property
+    def calibration_metrics(self) -> MetricCollection:
+        """
+        Property that defines the calibration metrics (ECE / NLL / Brier).
+
+        Returns:
+            MetricCollection: A collection of calibration metrics.
+        """
+        return get_calibration_metrics(num_classes=self._num_classes)
 
     @property
     def selective_classification_metrics(self) -> MetricCollection:

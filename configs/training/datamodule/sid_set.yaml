@@ -1,8 +1,18 @@
 datamodule:
   _target_: trustfake.data.SIDSetDataModule
   _partial_: true
-  dataset_name: saberzl/SID_Set
-  cache_dir: ${oc.env:DATA_PATH}
+  # Directory holding the SID_Set parquet shards (train-*.parquet /
+  # validation-*.parquet, searched recursively). See jobs/download_sidset.sh.
+  data_dir: ${oc.env:DATA_PATH}/sid_set
+  # Shard-level split profile: smoke | full | train | train_holdout
+  # (see trustfake.data.manifest.PROFILES).
+  profile: full
+  # Manifest seed for the shard-to-role assignment. A project constant --
+  # deliberately NOT ${experiment.seed}: the reported split must never move
+  # with the training seed.
+  manifest_seed: 0
+  # Fraction of fit carved out (row level) as the model-selection slice.
+  val_fraction: 0.05
   batch_size: ${dataloaders.batch_size}
   num_workers: ${dataloaders.num_workers}
   image_size: 224

@@ -17,6 +17,21 @@ experiment:
 wrapper: base  # base | mc_dropout
 num_samples: 20  # number of stochastic forward passes, used when wrapper: mc_dropout
 
+# Temperature scaling: fit a single T on the calib split (NLL-minimising) and
+# freeze it before scoring, as a calibration baseline. Reported ECE/NLL/Brier
+# reflect the fitted T. Set false to report the raw model (T = 1.0).
+calibrate: true
+
+# WP4 selective moderation: fit two thresholds on p(fake) on the clean calib
+# split (minimise review rate s.t. residual risk <= SLA), freeze, and report
+# coverage / review rate / residual risk / missed-fake / false-flag per
+# condition. An uncertainty gate reviews the most-uncertain review_budget
+# fraction of clean items. real_class is SID-Set label 0 (real).
+moderate: true
+moderation_sla: 0.05
+moderation_review_budget: 0.10
+real_class: 0
+
 step: test
 output_dir: ${oc.env:OUTPUT_PATH}/${experiment.name}/${model.name}/s${experiment.seed}
 

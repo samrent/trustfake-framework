@@ -3,3 +3,8 @@ attack:
   eps: 0.005
   clip_min: 0.0
   clip_max: 1.0
+  iters: 15
+  # quantize snaps candidate steps to the 1/255 pixel grid: the
+  # file-upload threat model. false describes an attacker with post-decode
+  # tensor access. Report which one a row is.
+  quantize: false

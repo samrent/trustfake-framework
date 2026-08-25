@@ -21,8 +21,22 @@ experiment:
   seed: 1
   training_pipe: standard
 
-wrapper: base  # base | mc_dropout
+wrapper: base  # base | mc_dropout | evidential
 num_samples: 20  # number of stochastic forward passes, used when wrapper: mc_dropout
+
+# Evidential Adversarial Training (EV-AT), used when
+# experiment.training_pipe: evidential_adversarial (with wrapper: evidential,
+# loss: evidential, uncertainty_score: evidential_predictive_entropy).
+beta: 1.0        # weight of the robust evidence-alignment loss L_REA
+rea_mode: ikl    # discrepancy for the adversary and L_REA: ikl | kl | l2
+adv_eps: 0.03137 # L_inf budget of the adversary (8/255); shared by EV-AT and AT
+adv_steps: 10    # PGD steps of the adversary
+
+# Adversarial-training baselines (experiment.training_pipe: pgd_at | trades).
+# Report at forensic epsilons: an 8/255 ball can erase deepfake evidence and
+# collapse training, so warm up eps or lower it (e.g. adv_eps: 0.00784 = 2/255).
+adv_warmup_epochs: 0  # ramp eps over the first N epochs (0 = off)
+trades_beta: 6.0      # TRADES robustness weight
 
 step: fit
 output_dir: ${oc.env:OUTPUT_PATH}/${experiment.name}/${model.name}/s${experiment.seed}

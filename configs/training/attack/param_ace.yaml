@@ -1,0 +1,9 @@
+# (eta, omega)-ACE (arXiv:2405.13922), a parameterised ACE family.
+attack:
+  _target_: trustfake.attacks.ParamACE
+  eps: 0.005
+  eta: 1        # +1 lowers confidence in omega; -1 raises it
+  omega: pred   # "pred" (clean prediction, label-free) | "true" (ground truth)
+  steps: 10
+  clip_min: 0.0
+  clip_max: 1.0

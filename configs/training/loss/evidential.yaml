@@ -1,0 +1,7 @@
+# Evidential clean loss L_EV (EV-AT Eq. 2-3). num_classes is set from the
+# datamodule by the EV-AT training module; lambda anneals over anneal_epochs.
+loss:
+  _target_: trustfake.losses.EvidentialLoss
+  num_classes: 3
+  lambda_max: 1.0
+  anneal_epochs: 10

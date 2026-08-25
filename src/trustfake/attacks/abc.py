@@ -1,10 +1,43 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 import torch
 
 from trustfake.models.wrapper import TrustFakeWrapper
 
-__all__ = ["AdversarialAttack"]
+__all__ = ["AdversarialAttack", "AttackResult"]
+
+
+@dataclass
+class AttackResult:
+    """What an attack produced, beyond the perturbed batch itself.
+
+    The metadata fields exist because some attacks make guarantees that a
+    re-forward cannot verify. ACE accepts a perturbation only when the
+    argmax is unchanged, so its label preservation is exact by construction
+    -- but only as measured on the accept-check forward. Re-running the
+    model on `perturbed` afterwards may use a different batch shape, and
+    some backends (e.g. cuDNN convolutions) are not bit-identical across
+    batch shapes, so a boundary sample can flip and preservation read 0.998
+    for reasons unrelated to the attack. When `accepted_logits` is present,
+    it is the reported forward.
+
+    Attributes:
+        perturbed: The perturbed inputs, same shape and range as the clean
+            inputs. Always present.
+        effective_eps: Per-sample L_inf perturbation actually applied,
+            shape (B,). None when the attack does not track it.
+        clean_preds: The model's predictions on the clean inputs, shape
+            (B,). None when the attack does not track them.
+        accepted_logits: Logits from the forward pass that accepted the
+            perturbation, shape (B, C). None when the attack has no accept
+            test.
+    """
+
+    perturbed: torch.Tensor
+    effective_eps: torch.Tensor | None = None
+    clean_preds: torch.Tensor | None = None
+    accepted_logits: torch.Tensor | None = None
 
 
 class AdversarialAttack(ABC):
@@ -16,6 +49,12 @@ class AdversarialAttack(ABC):
     inputs seen here stay in their original, unnormalized range. Subclasses
     should craft perturbations in that same range and keep the output inside
     `[clip_min, clip_max]`.
+
+    Implement `__call__` for a plain-tensor attack. An attack that produces
+    metadata (per-sample epsilon, an accept-check forward) overrides `run`
+    instead and implements `__call__` as `self.run(...).perturbed`; callers
+    that can use the metadata call `run`, everyone else keeps calling the
+    attack directly.
 
     Args:
         eps (float): Maximum perturbation radius
@@ -59,6 +98,19 @@ class AdversarialAttack(ABC):
             torch.Tensor: Perturbed inputs, same shape and range as `inputs`.
         """
         ...
+
+    def run(
+        self,
+        model: TrustFakeWrapper,
+        inputs: torch.Tensor,
+        targets: torch.Tensor | None = None,
+    ) -> AttackResult:
+        """
+        Rich-result entry point. The default wraps `__call__` with no
+        metadata; attacks that track metadata override this instead and
+        implement `__call__` as `self.run(...).perturbed`.
+        """
+        return AttackResult(perturbed=self(model, inputs, targets))
 
     def _clamp(self, perturbed: torch.Tensor) -> torch.Tensor:
         return perturbed.clamp(self.clip_min, self.clip_max)

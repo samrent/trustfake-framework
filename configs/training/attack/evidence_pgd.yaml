@@ -1,0 +1,10 @@
+# Evidence-targeted PGD (EV-AT Sec. 3.3): maximises Dirichlet-posterior drift
+# in log-concentration space. Requires an evidential wrapper (wrapper=evidential).
+attack:
+  _target_: trustfake.attacks.EvidenceTargetedPGD
+  eps: 0.03137  # 8/255
+  steps: 10
+  mode: ikl     # ikl | kl | l2
+  seed: 0
+  clip_min: 0.0
+  clip_max: 1.0

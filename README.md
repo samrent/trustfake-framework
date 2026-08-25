@@ -69,12 +69,35 @@ This trains the model defined in [`configs/training/train_config.yaml`](configs/
 ```bash
 python src/test.py experiment.name=my_experiment
 ```
-This loads the best checkpoint saved by the matching training run (same `experiment.name`, model and seed) and reports classification, failure-detection and selective-classification metrics. Add `+attack=fgsm` to also evaluate robustness under an adversarial attack:
+This loads the best checkpoint saved by the matching training run (same `experiment.name`, model and seed) and reports classification, failure-detection, selective-classification and calibration metrics (AURC/AUGRC/E-AURC as block-size-weighted means over distinct operating points, tie blocks collapsed -- see [`selective_classification.py`](src/trustfake/metrics/evaluation/selective_classification.py) for the convention). Add `+attack=fgsm` to also evaluate robustness under an adversarial attack:
 ```bash
 python src/test.py experiment.name=my_experiment +attack=fgsm
 ```
 
 See [`jobs/train_resnet18.sh`](jobs/train_resnet18.sh) for a full example. Prefix commands with `uv run` if you're using the `uv` setup instead of Docker.
+
+### Data splits
+
+Splits are governed by a shard-level manifest ([`src/trustfake/data/manifest.py`](src/trustfake/data/manifest.py)): **fit** comes from `train-*` parquet shards, **calib** and **test** from disjoint `validation-*` shards, and the model-selection slice (what Lightning sees as `val`) is carved from fit at row level. Early stopping and checkpointing therefore never see the rows that `src/test.py` reports on, and post-hoc quantities (e.g. a temperature) get their own `calib` split. The shard assignment is a function of `datamodule.manifest_seed` -- a project constant, deliberately independent of `experiment.seed`, so the reported split never moves with the training seed. Choose the shard budget with `datamodule.profile` (`smoke | full | train | train_holdout`).
+
+The official SID-Set test split is withheld by the dataset authors; everything called "test" here is carved from the validation split. Reports must say so (`trustfake.data.SPLIT_PROVENANCE`).
+
+The datamodule reads the parquet shards directly from `${DATA_PATH}/sid_set` -- fetch them with [`jobs/download_sidset.sh`](jobs/download_sidset.sh).
+
+### Calibration
+
+Temperature scaling is fitted on the `calib` split (NLL-minimising, one scalar
+`T`) and frozen before scoring, as the calibration baseline the harness
+benchmarks against. `calib` comes from validation shards disjoint from `test`,
+so this cannot touch the reported split. Reported **ECE / NLL / Brier** (clean
+and adversarial) reflect the fitted `T`; disable with `calibrate=false` to
+report the raw model.
+
+`T > 0` cannot change the argmax, so accuracy is untouched -- but unlike a
+2-class model (where MSP is monotone in the single logit margin and temperature
+cannot reorder samples), with three classes temperature *can* change the
+confidence ranking. Calibration is therefore a live variable here, which is
+what makes it a meaningful baseline for a selective-classification method.
 
 ### Jupyter notebooks
 
@@ -115,7 +138,7 @@ Attacks live in [`src/trustfake/attacks/`](src/trustfake/attacks/) and implement
 
 **To add a new attack:**
 
-1. Create a class in `src/trustfake/attacks/` that subclasses `AdversarialAttack`, implements `name` and `__call__`, and keeps its perturbation within `self.eps` (use the inherited `self._clamp()` to enforce `clip_min`/`clip_max`). Use `fgsm.py` as a reference implementation.
+1. Create a class in `src/trustfake/attacks/` that subclasses `AdversarialAttack`, implements `name` and `__call__`, and keeps its perturbation within `self.eps` (use the inherited `self._clamp()` to enforce `clip_min`/`clip_max`). Use `fgsm.py` as a reference implementation. An attack that produces metadata (per-sample epsilon, an accept-check forward) overrides `run` instead, returns an `AttackResult`, and implements `__call__` as `self.run(...).perturbed` -- see `ace.py`; the evaluation pipe then scores the accept-check forward directly instead of re-running the model.
 2. Export it from [`src/trustfake/attacks/__init__.py`](src/trustfake/attacks/__init__.py).
 3. Add a Hydra config for it under [`configs/training/attack/`](configs/training/attack/) (see `fgsm.yaml`), so it can be selected with `+attack=<name>` when running `src/test.py`.
 4. Register it in `ATTACKS` in [`tests/attacks/test_attack_contracts.py`](tests/attacks/test_attack_contracts.py) (see below) to get it covered by the validation suite.
@@ -129,6 +152,100 @@ or, if you're using the `uv` setup instead of Docker:
 uv run pytest tests/attacks -v
 ```
 These checks catch the common ways an attack implementation goes wrong, but are not a substitute for attack-specific tests (e.g. checking that FGSM actually moves in the sign-of-gradient direction).
+
+### Available attacks
+
+Selected with `+attack=<name>` when running `src/test.py`. Two families: a
+**confidence-targeted** attack collapses selective risk while leaving accuracy
+untouched (label preservation is a constraint), whereas a
+**prediction-targeted** attack collapses it as a side effect of destroying
+accuracy. `eps` is an L∞ budget except for the minimum-norm attacks
+(DeepFool, C&W, FAB), where it is a cap on the result's norm; those are noted.
+
+| name | family | reference | notes |
+|---|---|---|---|
+| `fgsm` | prediction | Goodfellow et al. 2015 | single step |
+| `bim` | prediction | Kurakin et al. 2017 | iterative, no random start |
+| `pgd` | prediction | Madry et al. 2018 | random start, seeded |
+| `deepfool` | prediction | Moosavi-Dezfooli et al. 2016 | min-norm; `eps` is an L2 cap |
+| `cw` | prediction | Carlini & Wagner 2017 | L2; `eps` is an L2 cap |
+| `tr` | prediction | Yao et al. 2019 | trust-region, adaptive step |
+| `apgd` | prediction | Croce & Hein 2020 | via `autoattack` |
+| `fab` | prediction | Croce & Hein 2020 | min-norm; via `autoattack` |
+| `square` | prediction | Andriushchenko et al. 2020 | query-based; via `autoattack` |
+| `autoattack` | prediction | Croce & Hein 2020 | ensemble; class-count-safe composition |
+| `uncertainty_fgsm` | confidence | Disrupting Deep Uncertainty Estimation | label-free; attacks the uncertainty score |
+| `ace` | confidence | Galil & El-Yaniv 2021 | per-sample eps search, accept test |
+| `param_ace` | confidence | Buerger et al. 2024 (arXiv:2405.13922) | (η,ω)-ACE family |
+| `overconf` | confidence | Ledda et al. 2025 | label-free, label-preserving |
+| `underconf` | confidence | Ledda et al. 2025 | label-free; toward max entropy |
+| `evidence_pgd` | confidence | EV-AT (arXiv:2607.03075) | maximises Dirichlet drift; needs `wrapper=evidential` |
+
+The `autoattack`-package wrappers drive the model through a logits adapter and
+seed their randomised components for determinism; the ensemble excludes the
+targeted stages, which read 3rd/4th-largest logits and cannot run on a
+few-class detector (see the wrapper docstring). Attacks with an accept test or
+a min-norm search return an `AttackResult` carrying the per-sample effective
+epsilon and the accept-check logits, which the evaluation pipe scores directly.
+
+Not yet ported: **A³** (adaptive AutoAttack), **PDPGD**, and **BB** (Brendel &
+Bethge, via foolbox) each need a separate non-PyPI research repository or a new
+heavyweight dependency, so none could be vendored and verified offline. Adding
+any of them is a dependency decision worth taking deliberately.
+
+## Methods and training pipelines
+
+The training pipeline is chosen with `experiment.training_pipe`:
+
+| pipe | what | key config |
+|---|---|---|
+| `standard` | ordinary training | — |
+| `pgd_at` | PGD adversarial training (Madry 2018) | `adv_eps`, `adv_steps`, `adv_warmup_epochs` |
+| `trades` | TRADES (Zhang 2019) | `trades_beta`, `adv_eps`, `adv_steps` |
+| `evidential_adversarial` | Evidential Adversarial Training (EV-AT) | `beta`, `rea_mode`, `adv_eps`, `adv_steps` |
+
+**EV-AT** (arXiv:2607.03075) is the evidential method the harness benchmarks
+against the MSP and temperature-scaling baselines. The backbone becomes an
+evidential head (`wrapper=evidential`): evidence `e = softplus(logits)`,
+Dirichlet `α = e + 1`, posterior mean `π̄ = α/S`, and the selective score is
+the posterior entropy `u = H[Cat(π̄)]`. Training minimises the evidential loss
+`L_EV` (`loss=evidential`) plus `β·L_REA`, where `L_REA` aligns the clean and
+adversarial posteriors in log-Dirichlet space (IKL by default) and the
+adversarial examples come from the evidence-targeted adversary. A full run:
+
+```bash
+python src/train.py experiment.name=ev_at \
+  experiment.training_pipe=evidential_adversarial \
+  wrapper=evidential loss=evidential \
+  uncertainty_score=evidential_predictive_entropy
+```
+
+Report robustness at a forensic epsilon: an 8/255 ball can erase the
+small-amplitude, high-frequency evidence a deepfake detector relies on and
+collapse adversarial training, so lower `adv_eps` (e.g. `0.00784` = 2/255) or
+ramp it with `adv_warmup_epochs`. Adversarial-training arms must be matched on
+optimiser steps (same `max_epochs`/schedule), not wall-clock, to compare method
+rather than budget.
+
+## Selective moderation (WP4)
+
+`src/test.py` fits a two-threshold moderation policy on the clean calib split
+(minimise review rate subject to a residual-risk SLA) and freezes it, then
+reports per condition — clean and adversarial — `coverage`, `review_rate`,
+`residual_risk`, `missed_fake_rate` and `false_flag_rate`, plus an
+uncertainty-gated two-axis variant. Two thresholds on `p(fake)` (= `1 − P(real)`
+for the 3-class detector) rather than one on confidence, because moderation
+costs are asymmetric. Residual risk is `NaN`, never `0.0`, on an empty
+auto-decide zone, and an infeasible SLA degrades to review-everything. Tune with
+`moderation_sla` and `moderation_review_budget`; disable with `moderate=false`.
+
+## Trivial baselines and verification
+
+`python src/baselines.py` reports the metadata floor every detector accuracy
+must be read against — chiefly `width == height → fake`, computed from the
+original image bytes over a split's shards. `trustfake.data.verify` checks the
+split manifest is reproducible (deterministic, firewall-consistent) and that a
+finished run left a checkpoint and saved config behind.
 
 ## Baselines
 

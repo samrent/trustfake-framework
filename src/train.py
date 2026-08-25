@@ -13,14 +13,31 @@ from trustfake.instantiator import (
     save_experiment_config,
 )
 from trustfake.logging import add_handler, get_logger
-from trustfake.models.wrapper import BaseWrapper, MCDropoutWrapper
-from trustfake.pipes.train import StandardTrainingModule
+from trustfake.models.wrapper import (
+    BaseWrapper,
+    EvidentialWrapper,
+    MCDropoutWrapper,
+)
+from trustfake.pipes.train import (
+    EvidentialAdversarialTrainingModule,
+    PGDAdversarialTrainingModule,
+    StandardTrainingModule,
+    TRADESTrainingModule,
+)
 
 logger = get_logger("training-pipe")
 
 WRAPPERS = {
     "base": BaseWrapper,
     "mc_dropout": MCDropoutWrapper,
+    "evidential": EvidentialWrapper,
+}
+
+TRAINING_PIPES = {
+    "standard": StandardTrainingModule,
+    "evidential_adversarial": EvidentialAdversarialTrainingModule,
+    "pgd_at": PGDAdversarialTrainingModule,
+    "trades": TRADESTrainingModule,
 }
 
 
@@ -74,6 +91,10 @@ def run_train_pipe(cfg: DictConfig) -> None:
     wrapper_kwargs = {}
     if wrapper_cls is MCDropoutWrapper:
         wrapper_kwargs["num_samples"] = cfg.get("num_samples", 20)
+    if wrapper_cls is EvidentialWrapper:
+        wrapper_kwargs["evidence_activation"] = cfg.get(
+            "evidence_activation", "softplus"
+        )
 
     module = wrapper_cls(
         normalization_layer=datamodule.normalization_layer,
@@ -83,11 +104,36 @@ def run_train_pipe(cfg: DictConfig) -> None:
         **wrapper_kwargs,
     )
 
-    training_module = StandardTrainingModule(
+    pipe_name = exp_cfg.get("training_pipe", "standard")
+    pipe_cls = TRAINING_PIPES.get(pipe_name)
+    if pipe_cls is None:
+        msg = f"Unknown training_pipe '{pipe_name}'. Available: {list(TRAINING_PIPES)}"
+        logger.error(msg)
+        raise ValueError(msg)
+
+    pipe_kwargs = {}
+    if pipe_cls is EvidentialAdversarialTrainingModule:
+        pipe_kwargs = {
+            "beta": cfg.get("beta", 1.0),
+            "divergence_mode": cfg.get("rea_mode", "ikl"),
+            "adv_eps": cfg.get("adv_eps", 8 / 255),
+            "adv_steps": cfg.get("adv_steps", 10),
+        }
+    elif pipe_cls in (PGDAdversarialTrainingModule, TRADESTrainingModule):
+        pipe_kwargs = {
+            "eps": cfg.get("adv_eps", 8 / 255),
+            "steps": cfg.get("adv_steps", 10),
+            "eps_warmup_epochs": cfg.get("adv_warmup_epochs", 0),
+        }
+        if pipe_cls is TRADESTrainingModule:
+            pipe_kwargs["beta"] = cfg.get("trades_beta", 6.0)
+
+    training_module = pipe_cls(
         model=module,
         num_classes=datamodule.num_classes,
         optimizer=cfg["optimizer"],
         scheduler=cfg.get("scheduler", None),
+        **pipe_kwargs,
     )
 
     trainer: lightning.Trainer = cfg["trainer"]

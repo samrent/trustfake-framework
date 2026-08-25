@@ -1,0 +1,7 @@
+# BIM (Kurakin, Goodfellow & Bengio, 2017). PGD without random start.
+attack:
+  _target_: trustfake.attacks.BIM
+  eps: 0.03137  # 8/255
+  steps: 10
+  clip_min: 0.0
+  clip_max: 1.0

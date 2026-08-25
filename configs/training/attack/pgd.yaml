@@ -1,0 +1,9 @@
+# PGD-Linf (Madry et al., ICLR 2018).
+attack:
+  _target_: trustfake.attacks.PGD
+  eps: 0.03137  # 8/255
+  steps: 10
+  random_start: true
+  seed: 0       # fixed so the attack is deterministic for a given input
+  clip_min: 0.0
+  clip_max: 1.0

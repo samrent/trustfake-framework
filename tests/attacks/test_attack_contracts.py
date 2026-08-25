@@ -16,16 +16,39 @@ import copy
 import pytest
 import torch
 
-from trustfake.attacks import FGSM, UncertaintyFGSM
+from trustfake.attacks import (
+    ACE,
+    BIM,
+    FGSM,
+    PGD,
+    CarliniWagner,
+    DeepFool,
+    OverConfidence,
+    ParamACE,
+    TrustRegion,
+    UncertaintyFGSM,
+    UnderConfidence,
+)
 
 EPS = 0.05
 CLIP_MIN, CLIP_MAX = 0.0, 1.0
 
-# Add new attacks here to get them covered by every test below.
+# Native, deterministic attacks: every one gets the full contract battery.
+# The autoattack-package wrappers (APGD/FAB/Square/AutoAttack) are slower and
+# tested separately in test_autoattack_wrappers.py. For the two min-norm
+# attacks (DeepFool, C&W) eps is an L2 cap, which also satisfies L_inf <= eps.
 ATTACKS = [
     FGSM(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
     UncertaintyFGSM(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
-    # ACE is not implemented yet (trustfake/attacks/ace.py), so it's excluded.
+    ACE(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    ParamACE(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    PGD(eps=EPS, steps=5, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    BIM(eps=EPS, steps=5, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    DeepFool(eps=EPS, steps=20, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    CarliniWagner(eps=EPS, steps=30, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    OverConfidence(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    UnderConfidence(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
+    TrustRegion(eps=EPS, steps=10, clip_min=CLIP_MIN, clip_max=CLIP_MAX),
 ]
 
 ATTACK_IDS = [attack.name for attack in ATTACKS]
@@ -112,7 +135,18 @@ def test_perturbation_is_nonzero(attack, model, inputs, targets):
 
 
 @pytest.mark.parametrize(
-    "attack_cls", [FGSM, UncertaintyFGSM], ids=["fgsm", "uncertainty_fgsm"]
+    "attack_cls",
+    [FGSM, UncertaintyFGSM, ACE, ParamACE, PGD, BIM, DeepFool, CarliniWagner],
+    ids=[
+        "fgsm",
+        "uncertainty_fgsm",
+        "ace",
+        "param_ace",
+        "pgd",
+        "bim",
+        "deepfool",
+        "cw",
+    ],
 )
 def test_zero_epsilon_returns_input_unchanged(attack_cls, model, inputs, targets):
     zero_eps_attack = attack_cls(eps=0.0, clip_min=CLIP_MIN, clip_max=CLIP_MAX)
@@ -131,3 +165,46 @@ def test_is_deterministic_for_a_fixed_model_and_input(attack, model, inputs, tar
     second = attack(model_copy, inputs, targets)
 
     assert torch.allclose(first, second)
+
+
+def test_run_perturbed_matches_call(attack, model, inputs, targets):
+    """`run` and `__call__` must produce the same perturbation -- whether an
+    attack implements the rich path natively or inherits the wrapper."""
+    result = attack.run(model, inputs, targets)
+    direct = attack(model, inputs, targets)
+    assert torch.allclose(result.perturbed, direct)
+
+
+def test_ace_rich_result_contract(model, inputs, targets):
+    """The metadata ACE guarantees: per-sample effective epsilon equals the
+    applied L_inf and respects the budget; the accepted logits' argmax
+    equals the clean prediction (label preservation exact, by construction,
+    on the accept-check forward)."""
+    ace = ACE(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX)
+    result = ace.run(model, inputs, targets)
+
+    assert result.effective_eps.shape == (inputs.shape[0],)
+    applied = (result.perturbed - inputs).abs().flatten(1).amax(dim=1)
+    assert torch.allclose(result.effective_eps, applied)
+    assert (result.effective_eps <= EPS + 1e-6).all()
+
+    with torch.no_grad():
+        _, _, clean_preds, _ = model(inputs)
+    assert torch.equal(result.clean_preds, clean_preds)
+    assert torch.equal(result.accepted_logits.argmax(dim=1), clean_preds)
+
+
+def test_ace_without_labels_only_lowers_confidence(model, inputs):
+    """Without ground truth every sample counts as correct, so ACE can only
+    push confidence down -- and predictions still never change."""
+    ace = ACE(eps=EPS, clip_min=CLIP_MIN, clip_max=CLIP_MAX)
+    result = ace.run(model, inputs, targets=None)
+
+    with torch.no_grad():
+        _, probs_clean, preds_clean, _ = model(inputs)
+    conf_clean = probs_clean.gather(1, preds_clean[:, None]).squeeze(1)
+    conf_adv = (
+        result.accepted_logits.softmax(dim=1).gather(1, preds_clean[:, None]).squeeze(1)
+    )
+    assert torch.equal(result.accepted_logits.argmax(dim=1), preds_clean)
+    assert (conf_adv <= conf_clean + 1e-6).all()

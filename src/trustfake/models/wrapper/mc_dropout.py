@@ -49,7 +49,7 @@ class MCDropoutWrapper(TrustFakeWrapper):
         probs_samples = []
         for _ in range(self.num_samples):
             logits = self.model(x)
-            probs = torch.softmax(logits, dim=1)
+            probs = torch.softmax(logits / self.temperature, dim=1)
             logits_samples.append(logits)
             probs_samples.append(probs)
             self.uncertainty_score.update(probs)
