@@ -7,11 +7,12 @@ are the single source of truth. Serve with:
     set -a; . ./.env; set +a
     python jobs/serve_results.py --port 8793 --strategy ACE
 
-Presentation: one profile card per arm (bar charts, ranked by resilience)
-because the two findings that matter are SHAPES, not digits -- gradient
-masking is a tall PGD bar next to an empty Square bar, and confidence
-inversion is an fd-AUROC bar that fails to reach the 0.5 line. The full
-numeric table follows for detail.
+Presentation: three charts, because the findings are RELATIONSHIPS, not
+magnitudes -- (1) the clean-accuracy / confidence-resilience frontier,
+(2) the per-arm collapse of failure-detection AUROC under ACE, and (3) the
+gradient-masking check, PGD against AutoAttack, where distance below the
+diagonal is exactly the overstatement PGD reports. The numeric table follows
+for detail.
 
 Bind is 0.0.0.0 on the assumption of a private (tailnet) host; there is no
 auth, so do not expose it beyond one.
@@ -38,15 +39,16 @@ from sweep import (  # noqa: E402
     confidence_resilience,
 )
 
+#: Colour encodes the arm's DESIGN category, constant across all charts.
 AXIS = {
-    "standard": "control",
-    "pgd_at": "label axis",
-    "trades": "label axis",
-    "at_kl": "label axis (hybrid)",
-    "mart": "label axis (hybrid)",
-    "at_conf": "confidence axis",
-    "conf_reg": "confidence axis",
-    "evidential_adversarial": "evidential",
+    "standard": ("control", "#8a8f9c"),
+    "pgd_at": ("label axis", "#3b6ea5"),
+    "trades": ("label axis", "#3b6ea5"),
+    "at_kl": ("label axis", "#3b6ea5"),
+    "mart": ("label axis", "#3b6ea5"),
+    "at_conf": ("confidence axis", "#c2571f"),
+    "conf_reg": ("confidence axis", "#c2571f"),
+    "evidential_adversarial": ("evidential", "#7b5ed1"),
 }
 
 COLUMNS = (
@@ -66,23 +68,21 @@ COLUMNS = (
 FINDINGS = (
     "Confidence attacks leave accuracy bit-identical while failure-detection "
     "AUROC inverts (undefended: 0.843 clean, 0.134 under ACE). Below 0.5, "
-    "abstention actively selects errors.",
+    "abstention actively selects errors -- chart 2's grey line.",
     "Gradient masking in the evidential head: PGD reports 0.54 robust "
-    "accuracy on ev_only while gradient-free Square reports 0.004. Any "
-    "robustness number for an evidential model from a PGD-family attack is "
-    "suspect; read AutoAttack / Square. The card shape: a tall PGD bar over "
-    "an empty Square bar.",
+    "accuracy on ev_only while gradient-free Square reports 0.004. In chart "
+    "3, distance below the diagonal IS the overstatement.",
     "The evidence-targeted adversary does not remove the masking "
     "(ev_at_b0: PGD 0.48, AutoAttack 0.014).",
-    "The over-confidence attack can DELETE the evidential selective signal, "
-    "not just invert it: on ev_at_b0 the uncertainty score collapses to one "
-    "distinct value (n_op = 1), leaving a single operating point -- accept "
-    "everything. Shown as a hatched bar.",
+    "The over-confidence attack can DELETE the evidential selective signal "
+    "outright: on ev_at_b0 the uncertainty score collapses to one distinct "
+    "value (n_op = 1) -- a single operating point, accept everything. Such "
+    "arms drop off chart 2 and are footnoted.",
     "Classical label-axis training substantially repairs the confidence "
-    "axis (resilience 0.35 -> 0.72-0.76), and holds the frozen-gate "
-    "residual risk under ACE at clean levels (0.04-0.05 vs 0.23 "
-    "undefended). The direct penalty arm (conf_reg) does nothing under "
-    "attack; the inner adversary, not the penalty, does the work.",
+    "axis, and full EV-AT (beta = 1) joins it -- against ev_at_b0's deleted "
+    "score, the evidence-alignment term REA is what does the work. Read "
+    "with the masking caveat: the confidence attacks are gradient-based "
+    "too, so evidential resilience needs a gradient-free confirmation.",
 )
 
 CAVEATS = (
@@ -95,12 +95,12 @@ CAVEATS = (
     "split, so the clean column is not a forensic-quality claim. "
     "Within-model comparisons (clean vs attacked, arm vs arm) are "
     "unaffected.",
-    "Missing bars/cells: evaluations that predate the fp32 eval fix are "
+    "Missing points/cells: evaluations that predate the fp32 eval fix are "
     "being re-run and fill in as the queue drains.",
 )
 
 
-def _cell_class(key: str | None, value: float) -> str:
+def _cell_class(key, value):
     if key is None or (key and key.endswith("fd_auroc")):
         if value < 0.5:
             return " class='bad'"
@@ -114,7 +114,7 @@ def _cell_class(key: str | None, value: float) -> str:
     return ""
 
 
-def _fmt(value, metrics, key=None) -> str:
+def _fmt(value, metrics, key=None):
     if value is None:
         return "<td class='na'>&ndash;</td>"
     if isinstance(value, float) and math.isnan(value):
@@ -126,87 +126,217 @@ def _fmt(value, metrics, key=None) -> str:
     return f"<td>{html.escape(str(value))}</td>"
 
 
-def _bar(label: str, value, kind: str) -> str:
-    """One horizontal bar. kind: 'acc' (neutral blue), 'fd' (0.5 reference
-    line, colour by threshold), 'rr' (colour by SLA distance, bar spans
-    0..0.4 so the interesting range is visible)."""
-    if value is None:
-        return (
-            f"<div class='bar'><span class='blab'>{label}</span>"
-            "<div class='track'><span class='pend'>pending</span></div>"
-            "<span class='bval'></span></div>"
+def _short(name):
+    return name.removeprefix("e8_")
+
+
+def _spread(desired, gap=15.0, lo=None, hi=None):
+    """1-D label layout: keep the given order, enforce a minimum gap."""
+    out = []
+    for y in desired:
+        if out and y < out[-1] + gap:
+            y = out[-1] + gap
+        out.append(y)
+    if hi is not None and out and out[-1] > hi:
+        shift = out[-1] - hi
+        out = [y - shift for y in out]
+        for i in range(len(out) - 2, -1, -1):
+            if out[i] > out[i + 1] - gap:
+                out[i] = out[i + 1] - gap
+    if lo is not None:
+        out = [max(y, lo) for y in out]
+    return out
+
+
+W, H, ML, MR, MT, MB = 680, 340, 56, 160, 18, 40
+
+
+def _frame(x0, x1, y0, y1, xticks, yticks, xlab, ylab):
+    def sx(v):
+        return ML + (v - x0) / (x1 - x0) * (W - ML - MR)
+
+    def sy(v):
+        return MT + (1 - (v - y0) / (y1 - y0)) * (H - MT - MB)
+
+    parts = []
+    for t in xticks:
+        parts.append(
+            f"<line x1='{sx(t):.1f}' y1='{MT}' x2='{sx(t):.1f}' "
+            f"y2='{H - MB}' class='grid'/>"
+            f"<text x='{sx(t):.1f}' y='{H - MB + 16}' class='tick' "
+            f"text-anchor='middle'>{t:g}</text>"
         )
-    if isinstance(value, float) and math.isnan(value):
-        return (
-            f"<div class='bar'><span class='blab'>{label}</span>"
-            "<div class='track'><div class='fill del' style='width:100%'>"
-            "</div></div><span class='bval bad-t'>del.</span></div>"
+    for t in yticks:
+        parts.append(
+            f"<line x1='{ML}' y1='{sy(t):.1f}' x2='{W - MR}' "
+            f"y2='{sy(t):.1f}' class='grid'/>"
+            f"<text x='{ML - 8}' y='{sy(t):.1f}' class='tick' "
+            f"text-anchor='end' dominant-baseline='central'>{t:g}</text>"
         )
-    pct = max(0.0, min(1.0, float(value))) * 100
-    cls = "acc"
-    if kind == "fd":
-        cls = "bad" if value < 0.5 else ("good" if value >= 0.7 else "mid")
-    elif kind == "rr":
-        cls = "bad" if value > 0.15 else ("good" if value <= 0.06 else "mid")
-        pct = max(0.0, min(1.0, float(value) / 0.4)) * 100
-    track = "track fdline" if kind == "fd" else "track"
+    parts.append(
+        f"<text x='{(ML + W - MR) / 2:.0f}' y='{H - 6}' class='axis' "
+        f"text-anchor='middle'>{xlab}</text>"
+        f"<text x='{ML}' y='{MT - 6}' class='axis'>{ylab}</text>"
+    )
+    return sx, sy, "".join(parts)
+
+
+def _scatter(points, x0, x1, y0, y1, xticks, yticks, xlab, ylab, refline):
+    """points: (x, y, name, colour). refline: None | ('h', v) | ('diag',)."""
+    sx, sy, body = _frame(x0, x1, y0, y1, xticks, yticks, xlab, ylab)
+    if refline:
+        if refline[0] == "h":
+            y = sy(refline[1])
+            body += (
+                f"<line x1='{ML}' y1='{y:.1f}' x2='{W - MR}' y2='{y:.1f}' class='ref'/>"
+            )
+        else:
+            lo, hi = max(x0, y0), min(x1, y1)
+            body += (
+                f"<line x1='{sx(lo):.1f}' y1='{sy(lo):.1f}' "
+                f"x2='{sx(hi):.1f}' y2='{sy(hi):.1f}' class='ref'/>"
+                f"<text x='{sx(hi) - 4:.1f}' y='{sy(hi) + 14:.1f}' "
+                "class='tick' text-anchor='end'>honest = on the line</text>"
+            )
+    pts = sorted(points, key=lambda p: sy(p[1]))
+    label_y = _spread([sy(p[1]) for p in pts], 15, MT + 8, H - MB - 4)
+    for (x, y, name, colour), ly in zip(pts, label_y, strict=True):
+        px, py = sx(x), sy(y)
+        body += f"<circle cx='{px:.1f}' cy='{py:.1f}' r='5' fill='{colour}'/>"
+        lx = px + 9
+        if abs(ly - py) > 8:
+            body += (
+                f"<line x1='{px + 5:.1f}' y1='{py:.1f}' x2='{lx:.1f}' "
+                f"y2='{ly:.1f}' class='lead'/>"
+            )
+        body += (
+            f"<text x='{lx + 2:.1f}' y='{ly:.1f}' class='plab' "
+            f"fill='{colour}' dominant-baseline='central'>{name}</text>"
+        )
+    return body
+
+
+def _svg(body):
     return (
-        f"<div class='bar'><span class='blab'>{label}</span>"
-        f"<div class='{track}'><div class='fill {cls}' "
-        f"style='width:{pct:.1f}%'></div></div>"
-        f"<span class='bval'>{value:.3f}</span></div>"
+        f"<svg viewBox='0 0 {W} {H}' width='100%' role='img' "
+        "preserveAspectRatio='xMidYMid meet'>" + body + "</svg>"
     )
 
 
-def _card(name: str, pipe: str, metrics, resilience) -> str:
-    axis = AXIS.get(pipe, "evidential")
-    if not metrics:
-        return (
-            f"<div class='card pending'><div class='chead'>{name}"
-            f"<span class='tag'>{axis}</span></div>"
-            "<p class='muted'>pending</p></div>"
+def _chart_frontier(rows):
+    pts = [
+        (m["nat_accuracy_top1"], r, _short(n), c)
+        for n, c, m, r in rows
+        if r is not None and "nat_accuracy_top1" in m
+    ]
+    body = _scatter(
+        pts,
+        0.6,
+        0.9,
+        0.2,
+        0.9,
+        (0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9),
+        (0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
+        "clean accuracy",
+        "confidence resilience",
+        ("h", 0.5),
+    )
+    return _svg(body)
+
+
+def _chart_collapse(rows):
+    xc, xa = ML + 60, W - MR - 40
+    sy = lambda v: MT + (1 - (v - 0.0) / 0.9) * (H - MT - MB)  # noqa: E731
+    body = ""
+    for t in (0.0, 0.25, 0.5, 0.75):
+        cls = "ref" if t == 0.5 else "grid"
+        body += (
+            f"<line x1='{ML}' y1='{sy(t):.1f}' x2='{W - MR}' "
+            f"y2='{sy(t):.1f}' class='{cls}'/>"
+            f"<text x='{ML - 8}' y='{sy(t):.1f}' class='tick' "
+            f"text-anchor='end' dominant-baseline='central'>{t:g}</text>"
         )
-    g = metrics.get
-    res = "&ndash;" if resilience is None else f"{resilience:.3f}"
-    return f"""<div class='card'>
-<div class='chead'>{name}<span class='tag'>{axis}</span>
-<span class='res'>resilience {res}</span></div>
-<div class='grp'><div class='glab'>accuracy — clean and prediction
-attacks</div>
-{_bar("clean", g("nat_accuracy_top1"), "acc")}
-{_bar("PGD", g("pgd_accuracy_top1"), "acc")}
-{_bar("AutoAtk", g("autoattack_accuracy_top1"), "acc")}
-{_bar("Square", g("square_accuracy_top1"), "acc")}</div>
-<div class='grp'><div class='glab'>failure-detection AUROC — line marks 0.5;
-below it abstention selects errors</div>
-{_bar("clean", g("nat_fd_auroc"), "fd")}
-{_bar("@ACE", g("ace_uint8_fd_auroc"), "fd")}
-{_bar("@ovconf", g("overconf_fd_auroc"), "fd")}</div>
-<div class='grp'><div class='glab'>residual risk at the frozen gate
-(SLA 0.05; bar spans 0&ndash;0.4)</div>
-{_bar("clean", g("nat_moderation_residual_risk"), "rr")}
-{_bar("@ACE", g("ace_uint8_moderation_residual_risk"), "rr")}</div>
-</div>"""
+    body += (
+        f"<text x='{xc}' y='{H - MB + 18}' class='axis' "
+        "text-anchor='middle'>clean</text>"
+        f"<text x='{xa}' y='{H - MB + 18}' class='axis' "
+        "text-anchor='middle'>under ACE</text>"
+        f"<text x='{ML}' y='{MT - 6}' class='axis'>failure-detection AUROC "
+        "(0.5 line: below it, abstention selects errors)</text>"
+    )
+    slopes, deleted = [], []
+    for n, c, m, _ in rows:
+        a, b = m.get("nat_fd_auroc"), m.get("ace_uint8_fd_auroc")
+        if a is None or b is None:
+            continue
+        if isinstance(b, float) and math.isnan(b):
+            deleted.append(_short(n))
+            continue
+        slopes.append((a, b, _short(n), c))
+    slopes.sort(key=lambda s: sy(s[1]))
+    label_y = _spread([sy(s[1]) for s in slopes], 15, MT + 8, H - MB - 4)
+    for (a, b, name, colour), ly in zip(slopes, label_y, strict=True):
+        y1, y2 = sy(a), sy(b)
+        body += (
+            f"<line x1='{xc}' y1='{y1:.1f}' x2='{xa}' y2='{y2:.1f}' "
+            f"stroke='{colour}' stroke-width='2.2' stroke-linecap='round' "
+            f"opacity='.85'/>"
+            f"<circle cx='{xc}' cy='{y1:.1f}' r='4' fill='{colour}'/>"
+            f"<circle cx='{xa}' cy='{y2:.1f}' r='4' fill='{colour}'/>"
+            f"<text x='{xa + 10}' y='{ly:.1f}' class='plab' fill='{colour}' "
+            f"dominant-baseline='central'>{name} {b:.2f}</text>"
+        )
+    note = (
+        f"score deleted by overconf (n_op=1): {', '.join(deleted)}" if deleted else ""
+    )
+    return _svg(body), note
 
 
-def build_page(strategy: str) -> str:
+def _chart_masking(rows):
+    pts, missing = [], []
+    for n, c, m, _ in rows:
+        p, a = m.get("pgd_accuracy_top1"), m.get("autoattack_accuracy_top1")
+        if p is None or a is None:
+            if "nat_accuracy_top1" in m:
+                missing.append(_short(n))
+            continue
+        pts.append((p, a, _short(n), c))
+    body = _scatter(
+        pts,
+        0.0,
+        0.8,
+        0.0,
+        0.8,
+        (0.0, 0.2, 0.4, 0.6, 0.8),
+        (0.0, 0.2, 0.4, 0.6, 0.8),
+        "accuracy under PGD (gradient-based)",
+        "accuracy under AutoAttack (ensemble)",
+        ("diag",),
+    )
+    note = f"awaiting AutoAttack: {', '.join(missing)}" if missing else ""
+    return _svg(body), note
+
+
+def build_page(strategy):
     grid = build_grid(strategy, 12)
-    entries = []
+    rows = []
     for cfg in grid:
         metrics = _latest_test_metrics(cfg["name"])
         good = bool(metrics) and "nat_accuracy_top1" in metrics
         res = confidence_resilience(metrics) if good else None
-        entries.append((cfg, metrics if good else {}, res))
-    # Cards ranked by resilience; unfinished and unrankable arms sink.
-    entries.sort(key=lambda e: (e[2] is None, -(e[2] or 0.0)))
+        colour = AXIS.get(cfg["pipe"], ("evidential", "#7b5ed1"))[1]
+        rows.append((cfg["name"], colour, metrics if good else {}, res))
 
-    cards = "".join(_card(c["name"], c["pipe"], m, r) for c, m, r in entries)
+    chart1 = _chart_frontier(rows)
+    chart2, note2 = _chart_collapse(rows)
+    chart3, note3 = _chart_masking(rows)
 
-    rows = []
-    for cfg, metrics, _ in entries:
+    table_rows = []
+    ordered = sorted(rows, key=lambda e: (e[3] is None, -(e[3] or 0.0)))
+    for name, _, metrics, _res in ordered:
         if not metrics:
-            rows.append(
-                f"<tr><td class='arm'>{cfg['name']}</td>"
+            table_rows.append(
+                f"<tr><td class='arm'>{name}</td>"
                 f"<td class='na' colspan='{len(COLUMNS)}'>pending</td></tr>"
             )
             continue
@@ -219,15 +349,24 @@ def build_page(strategy: str) -> str:
                 if key == "nat_n_operating_points" and value is not None:
                     value = int(value)
             cells.append(_fmt(value, metrics, key))
-        rows.append(
-            f"<tr><td class='arm'>{cfg['name']}</td>" + "".join(cells) + "</tr>"
-        )
+        table_rows.append(f"<tr><td class='arm'>{name}</td>" + "".join(cells) + "</tr>")
 
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    rows_joined = "".join(rows)
+    rows_joined = "".join(table_rows)
     head = "".join(f"<th>{name}</th>" for name, _ in COLUMNS)
     findings = "".join(f"<li>{html.escape(f)}</li>" for f in FINDINGS)
     caveats = "".join(f"<li>{html.escape(c)}</li>" for c in CAVEATS)
+    legend = " ".join(
+        f"<span style='color:{col}'>&#9679; {cat}</span>"
+        for cat, col in (
+            ("control", "#8a8f9c"),
+            ("label axis", "#3b6ea5"),
+            ("confidence axis", "#c2571f"),
+            ("evidential", "#7b5ed1"),
+        )
+    )
+    n2 = f"<p class='muted'>{html.escape(note2)}</p>" if note2 else ""
+    n3 = f"<p class='muted'>{html.escape(note3)}</p>" if note3 else ""
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="120">
@@ -235,50 +374,26 @@ def build_page(strategy: str) -> str:
 <style>
  :root {{ --bg:#fdfdfa; --fg:#1c1e24; --mut:#5c6270; --line:#d9dbe0;
    --mono:#111; --badbg:#fbe9e7; --bad:#9c2a1d; --goodbg:#e6f3e8;
-   --good:#1d6b34; --midbg:#fdf2dc; --mid:#8a5b12; --card:#f5f5f1;
-   --accent:#3b6ea5; --track:#e6e6e1; }}
+   --good:#1d6b34; --card:#f5f5f1; --grid:#e7e7e2; }}
  @media (prefers-color-scheme: dark) {{
    :root {{ --bg:#14151a; --fg:#e6e8ee; --mut:#9aa0ae; --line:#2c2e36;
      --mono:#f0f2f8; --badbg:#3a1f1b; --bad:#ff9c8a; --goodbg:#1b3323;
-     --good:#7ed99a; --midbg:#39301a; --mid:#e8b95c; --card:#1d1f26;
-     --accent:#7aa7d8; --track:#2a2c33; }} }}
+     --good:#7ed99a; --card:#1d1f26; --grid:#23252c; }} }}
  * {{ box-sizing: border-box; }}
  body {{ font: 17px/1.6 system-ui, sans-serif; margin: 0 auto; padding: 1rem;
    max-width: 78rem; background: var(--bg); color: var(--fg); }}
  h1 {{ font-size: 1.35rem; margin: .4rem 0; }}
- h2 {{ font-size: 1.1rem; margin-top: 1.8rem; }}
+ h2 {{ font-size: 1.1rem; margin-top: 1.9rem; }}
  .muted {{ color: var(--mut); font-size: .92em; }}
- .cards {{ display: grid; gap: 1rem;
-   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }}
- .card {{ background: var(--card); border: 1px solid var(--line);
-   border-radius: 12px; padding: .9rem 1rem; }}
- .card.pending {{ opacity: .55; }}
- .chead {{ font-family: ui-monospace, Menlo, monospace; font-weight: 600;
-   color: var(--mono); margin-bottom: .5rem; }}
- .tag {{ font: 12px/1 system-ui; color: var(--mut); border: 1px solid
-   var(--line); border-radius: 999px; padding: .15rem .55rem;
-   margin-left: .5rem; vertical-align: 2px; }}
- .res {{ float: right; font: 600 13px/1.6 system-ui; color: var(--mut); }}
- .grp {{ margin: .7rem 0 0; }}
- .glab {{ font-size: 12.5px; color: var(--mut); margin-bottom: .25rem; }}
- .bar {{ display: flex; align-items: center; gap: .5rem; margin: .22rem 0; }}
- .blab {{ flex: 0 0 4.2rem; font-size: 13px; color: var(--mut);
-   text-align: right; }}
- .track {{ flex: 1; height: 14px; background: var(--track);
-   border-radius: 7px; overflow: hidden; position: relative; }}
- .track.fdline::after {{ content: ''; position: absolute; left: 50%; top: 0;
-   bottom: 0; width: 2px; background: var(--mut); opacity: .8; }}
- .fill {{ height: 100%; border-radius: 7px; }}
- .fill.acc {{ background: var(--accent); }}
- .fill.good {{ background: var(--good); }}
- .fill.mid {{ background: var(--mid); }}
- .fill.bad {{ background: var(--bad); }}
- .fill.del {{ background: repeating-linear-gradient(45deg, var(--badbg),
-   var(--badbg) 6px, var(--bad) 6px, var(--bad) 8px); opacity: .75; }}
- .bval {{ flex: 0 0 3.2rem; font-size: 13px; font-variant-numeric:
-   tabular-nums; }}
- .bad-t {{ color: var(--bad); font-weight: 600; }}
- .pend {{ font-size: 12px; color: var(--mut); padding-left: .5rem; }}
+ .chart {{ background: var(--card); border: 1px solid var(--line);
+   border-radius: 12px; padding: .6rem .8rem; margin-top: .6rem; }}
+ svg {{ display: block; }}
+ .grid {{ stroke: var(--grid); stroke-width: 1; }}
+ .ref {{ stroke: var(--mut); stroke-width: 1.4; stroke-dasharray: 5 4; }}
+ .lead {{ stroke: var(--mut); stroke-width: .8; opacity: .6; }}
+ .tick {{ font: 12px system-ui; fill: var(--mut); }}
+ .axis {{ font: 13px system-ui; fill: var(--mut); }}
+ .plab {{ font: 600 13px ui-monospace, monospace; }}
  .wrap {{ overflow-x: auto; -webkit-overflow-scrolling: touch;
    border: 1px solid var(--line); border-radius: 10px; margin-top: .6rem; }}
  table {{ border-collapse: collapse; min-width: 900px; width: 100%;
@@ -300,11 +415,20 @@ def build_page(strategy: str) -> str:
 <h1>TrustFake — 8/255 sweep, live results</h1>
 <p class="muted">Generated {stamp}, rebuilt from the metrics CSVs on every
 request · auto-refreshes every 2 min · n = {SUBSAMPLE_ROWS} test-prefix rows ·
-one seed. Cards are ranked by confidence resilience. Bar colour: green =
-holding, amber = degraded, red = failing; hatched = the attack deleted the
-uncertainty score outright. The masking signature is a tall PGD bar over an
-empty Square bar.</p>
-<div class="cards">{cards}</div>
+one seed · {legend}</p>
+<h2>1 · The frontier — what confidence robustness costs in clean accuracy</h2>
+<p class="muted">Up and right is better. Below the dashed line, abstention
+selects errors.</p>
+<div class="chart">{chart1}</div>
+<h2>2 · The collapse — failure-detection AUROC, clean &rarr; under ACE</h2>
+<p class="muted">Flat is robust; a steep drop is the confidence attack
+working; crossing the dashed line is inversion.</p>
+<div class="chart">{chart2}</div>{n2}
+<h2>3 · The masking check — PGD vs AutoAttack</h2>
+<p class="muted">On the diagonal, PGD tells the truth. Distance below it is
+robustness PGD reports that a stronger attack refutes -- the obfuscated
+gradients signature.</p>
+<div class="chart">{chart3}</div>{n3}
 <h2>Full table</h2>
 <div class="wrap"><table>
 <tr><th class="arm">arm</th>{head}</tr>{rows_joined}</table></div>
@@ -333,7 +457,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def main() -> None:
+def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--port", type=int, default=8793)
     ap.add_argument("--strategy", default="ACE")
