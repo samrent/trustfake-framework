@@ -78,11 +78,84 @@ See [`jobs/train_resnet18.sh`](jobs/train_resnet18.sh) for a full example. Prefi
 
 ### Data splits
 
-Splits are governed by a shard-level manifest ([`src/trustfake/data/manifest.py`](src/trustfake/data/manifest.py)): **fit** comes from `train-*` parquet shards, **calib** and **test** from disjoint `validation-*` shards, and the model-selection slice (what Lightning sees as `val`) is carved from fit at row level. Early stopping and checkpointing therefore never see the rows that `src/test.py` reports on, and post-hoc quantities (e.g. a temperature) get their own `calib` split. The shard assignment is a function of `datamodule.manifest_seed` -- a project constant, deliberately independent of `experiment.seed`, so the reported split never moves with the training seed. Choose the shard budget with `datamodule.profile` (`smoke | full | train | train_holdout`).
+Splits are governed by a shard-level manifest ([`src/trustfake/data/manifest.py`](src/trustfake/data/manifest.py)): **fit** comes from `train-*` parquet shards, **calib** and **test** from disjoint `validation-*` shards, and the model-selection slice (what Lightning sees as `val`) is carved from fit at row level. Early stopping and checkpointing therefore never see the rows that `src/test.py` reports on, and post-hoc quantities (e.g. a temperature) get their own `calib` split. The shard assignment is a function of `datamodule.manifest_seed` -- a project constant, deliberately independent of `experiment.seed`, so the reported split never moves with the training seed. Choose the shard budget with `datamodule.profile` (`smoke | full | sweep | train | train_holdout | all | all_holdout`). `all` uses every train shard on disk rather than a fixed count, so it does not silently stop covering the dataset when shards are added; `all_holdout` reserves six of them, sealed and disjoint from fit. `sweep` is small everywhere, for comparing many configurations rather than reporting any of them.
 
 The official SID-Set test split is withheld by the dataset authors; everything called "test" here is carved from the validation split. Reports must say so (`trustfake.data.SPLIT_PROVENANCE`).
 
 The datamodule reads the parquet shards directly from `${DATA_PATH}/sid_set` -- fetch them with [`jobs/download_sidset.sh`](jobs/download_sidset.sh).
+
+### Long runs: resume and precision
+
+Training resumes from `last.ckpt` when one exists under the experiment's
+output directory. On by default, because a full-dataset adversarial arm is
+13+ hours on a single card and an interruption at hour 12 should cost an
+epoch rather than the run:
+
+```bash
+resume: false            # force a fresh start
+ckpt_path: /path/to.ckpt # resume a specific checkpoint instead of the newest
+```
+
+Mixed precision is `bf16-mixed` (`trainer.trainer.precision`). Training here
+is GPU-bound -- measured at 90-99% utilisation on a 3090 -- so it is worth
+roughly 1.7x. bf16 rather than fp16 deliberately: no loss scaling to tune,
+and no silent overflow in an adversarial inner loop, where gradients are
+taken with respect to the *input* and sit outside the range weight gradients
+occupy. The evidential head is computed in fp32 regardless, since it is an
+`exp -> log -> softmax` chain where an overflow surfaces far from its cause.
+
+Measured throughput is ~415 img/s for standard training, so the full dataset
+(~210k images, 12 epochs) is ~1.7h for `standard`, ~13.5h for PGD-7 and ~15h
+for TRADES.
+
+### Comparing methods: `src/sweep.py`
+
+Runs a set of arms under one protocol and ranks them on **confidence
+resilience** -- mean failure-detection AUROC under `ace_uint8` and
+`overconf`, subject to a clean-accuracy floor -- rather than on robust
+accuracy, which is the crowded axis this project does not try to win.
+
+```bash
+python src/sweep.py --strategy ACE --epochs 12 --profile train --subsample 1000
+python src/sweep.py --rank-only          # re-rank what is already on disk
+python src/sweep.py --strategy E --only ev_at   # run one arm by name
+```
+
+Four grids, from `SWEEP-STRATEGIES.md`:
+
+| grid | arms |
+|---|---|
+| `A` | `standard`, `pgd_at`, `trades` |
+| `B` | `at_kl`, `mart` -- the hybrids that document recommends skipping |
+| `C` | `at_conf`, `conf_reg` -- the confidence-targeted defences |
+| `E` | EV-AT and its ablation ladder (see below) |
+
+Every arm is pinned at eps = 8/255 with 7 inner steps. `--subsample N` caps
+the test split to its first N rows -- a prefix, so a capped set is nested in
+the full one and the two describe the same population, which is what lets
+Square (~7h per arm on the full split) sit in the same table as a clean
+evaluation. `calib` is never capped: every condition must be read against
+thresholds fitted on the same calibration data.
+
+Training is skipped when a checkpoint exists, so adding evaluation conditions
+does not pay for the expensive half twice.
+
+**The EV-AT ladder** (grid `E`) isolates one component per rung, which is the
+question an independent harness can ask that a method's own authors cannot
+easily ask of their own paper:
+
+| arm | what it isolates |
+|---|---|
+| `ev_only` | evidential head, **no adversary** |
+| `ev_at_b0` | adversary, REA off (`beta=0`) |
+| `ev_at` | full: adversary + REA |
+| `ev_at_awp` | + weight-space perturbation |
+| `ev_at_kl` / `ev_at_l2` | same `beta`, different discrepancy |
+
+`pgd_at` from grid `A` is the fourth corner: adversarial but not evidential.
+
+Sweep numbers **rank**; they do not report. Re-run the winner at
+`--profile train` (or `all`) with the cap removed before quoting anything.
 
 ### Calibration
 
