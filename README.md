@@ -183,6 +183,16 @@ confidence attack leaving accuracy bit-identical while the risk-coverage curve
 inverts and the frozen WP4 policy degrades on both axes at once. Start there if
 you want the argument before the API.
 
+It then walks the rest of the harness on the same toy model: the twenty-attack
+taxonomy and why `uses_labels` decides whether two rows are comparable; the
+witness guarantee that stops a minimum-norm attack reporting robustness a
+fixed-budget attack refutes; PGD-AT trained through the harness's own pipe, so
+the "does a label-axis defence repair the confidence axis" question is asked
+rather than asserted; and the SID-Set protocol -- the `width == height -> fake`
+trap, the geometry controls, the shard-level firewall, and the profile ladder
+from `smoke` to `all`. The dataset section degrades gracefully when the shards
+are not present, so the whole notebook still runs on a fresh clone.
+
 **Docker:**
 ```bash
 make jupyter
