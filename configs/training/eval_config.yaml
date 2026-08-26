@@ -6,6 +6,29 @@ defaults:
   - uncertainty_score: multiclass_max_probability
   - _self_
 
+# Evaluation runs in FULL precision, overriding the bf16 the shared trainer
+# config uses for training. Two reasons, and the second is the one that
+# matters. The external `autoattack` package crashes outright under bf16
+# autocast ("expected scalar type Float but found BFloat16") -- that is the
+# loud failure. The quiet one: every attack in an eval computes gradients
+# with respect to the INPUT, and a gradient quantised to 8 mantissa bits is
+# a slightly weaker attack. A weaker attack silently reports robustness the
+# model does not have, which is the exact failure mode this harness exists
+# to prevent. Training tolerates bf16 (it is regularisation-like noise on
+# weight updates); measurement does not.
+trainer:
+  trainer:
+    precision: 32
+    # "warn" = use_deterministic_algorithms(True, warn_only=True): every op
+    # with a deterministic kernel still uses it; ops without one (cumsum, in
+    # the external autoattack package's FAB) warn instead of raising. The
+    # hard setting only failed on DEFENDED arms -- on the undefended model
+    # APGD leaves no survivors, so FAB never executes its cumsum and the
+    # crash hides until the first model worth attacking. Training keeps the
+    # hard setting; in-repo attacks avoid cumsum entirely (see
+    # project_l1_ball's bisection, which exists for this reason).
+    deterministic: warn
+
 dataloaders:
     batch_size: 16
     num_workers: 8
