@@ -9,6 +9,13 @@ trainer:
   max_epochs: 100
   accelerator: auto
   deterministic: true
+  # Mixed precision. Training here is GPU-bound (measured at 90-99% utilisation
+  # on the 3090), so this is a real ~1.7x rather than a rounding error, and it
+  # is the difference between a full-dataset five-arm comparison taking ~46h
+  # and ~27h. bf16 rather than fp16: no loss scaling, and no silent overflow in
+  # an adversarial inner loop, where gradients are taken w.r.t. the INPUT and
+  # can be far outside the range a classifier's weight gradients occupy.
+  precision: bf16-mixed
   inference_mode: false
   enable_progress_bar: true
   default_root_dir: ${output_dir}

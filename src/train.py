@@ -1,4 +1,5 @@
 import os
+import pathlib
 from pathlib import Path
 
 import hydra
@@ -74,6 +75,24 @@ _AWP_CAPABLE = _ADVERSARIAL_PIPES + (
     ConfidenceRegularisedTrainingModule,
     EvidentialAdversarialTrainingModule,
 )
+
+
+def _resume_checkpoint(cfg: DictConfig, trainer) -> str | None:
+    """Path to resume `trainer.fit` from, or None to start fresh.
+
+    Returns `last.ckpt` under this experiment's output directory when it
+    exists and `resume` is not disabled. Anything else -- a missing file, a
+    first run -- returns None, so the default behaviour of a fresh experiment
+    is unchanged.
+    """
+    explicit = cfg.get("ckpt_path")
+    if explicit:
+        return str(explicit)
+    if not cfg.get("resume", True):
+        return None
+    root = pathlib.Path(trainer.default_root_dir)
+    candidates = sorted(root.rglob("last.ckpt"), key=lambda p: p.stat().st_mtime)
+    return str(candidates[-1]) if candidates else None
 
 
 @hydra.main(
@@ -191,7 +210,18 @@ def run_train_pipe(cfg: DictConfig) -> None:
     trainer: lightning.Trainer = cfg["trainer"]
 
     logger.info("Starting training...")
-    trainer.fit(training_module, datamodule=datamodule)
+    # Resume from `last.ckpt` when one is there. A full-dataset adversarial
+    # arm is 13+ hours on this card, and without this a session restart, an
+    # OOM or a reboot at hour 12 costs the whole run rather than one epoch --
+    # which is exactly the setting where an unattended job is most likely to
+    # be interrupted. `save_last: true` is already on, so the file exists.
+    #
+    # Set `resume: false` to force a fresh run. An explicit path overrides
+    # both, for resuming a specific checkpoint rather than the newest.
+    resume_from = _resume_checkpoint(cfg, trainer)
+    if resume_from is not None:
+        logger.info(f"Resuming from {resume_from}")
+    trainer.fit(training_module, datamodule=datamodule, ckpt_path=resume_from)
     logger.success("Training completed.")
 
     ckpt_cb: ModelCheckpoint | None = CallbacksHandler.get_callback(

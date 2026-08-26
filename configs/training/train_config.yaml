@@ -93,3 +93,11 @@ hydra:
     subdir: ${hydra.job.num}
   verbose: false
 
+
+# Resume `trainer.fit` from `last.ckpt` if one exists under this experiment's
+# output directory. On by default: a full-dataset adversarial arm is 13+ hours
+# on a single card, and an interruption at hour 12 should cost one epoch, not
+# the run. Set false to force a fresh start, or set ckpt_path to resume a
+# specific checkpoint instead of the newest.
+resume: true
+ckpt_path: null

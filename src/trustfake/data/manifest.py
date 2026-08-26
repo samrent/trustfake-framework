@@ -56,6 +56,7 @@ from trustfake.logging import get_logger
 logger = get_logger("manifest")
 
 __all__ = [
+    "ALL_SHARDS",
     "PROFILES",
     "DEFAULT_MANIFEST_SEED",
     "SPLIT_PROVENANCE",
@@ -75,6 +76,11 @@ SPLIT_PROVENANCE = (
 DEFAULT_MANIFEST_SEED = 0
 
 # Shard counts per role. SID_Set ships 249 train / 34 validation shards.
+#: `fit: ALL_SHARDS` means every train shard left after the holdout is taken.
+#: Resolved against what is on disk rather than written as a number, so the
+#: profile does not silently stop covering the dataset when it grows.
+ALL_SHARDS = -1
+
 PROFILES: dict[str, dict[str, int]] = {
     # Offline pre-flight: enough shards to exercise every code path.
     "smoke": {"fit": 2, "calib": 1, "test": 2},
@@ -92,6 +98,13 @@ PROFILES: dict[str, dict[str, int]] = {
     # sweep on its own slice is also what stops a 20-config search from
     # quietly becoming 20 attempts at the reported test split.
     "sweep": {"fit": 12, "calib": 2, "test": 4},
+    # Every train shard not reserved for the holdout. `train` uses 30 of 249,
+    # i.e. 12% of the data -- fine for developing the pipeline, and a ceiling
+    # nothing could ask past, since a profile could only name a fixed count.
+    # ALL_SHARDS is what lets a run say "the rest of it" without hardcoding a
+    # number that goes stale the moment a shard is added.
+    "all": {"fit": ALL_SHARDS, "calib": 8, "test": 26},
+    "all_holdout": {"fit": ALL_SHARDS, "calib": 8, "test": 26, "holdout": 6},
     # As "train", plus a sealed holdout drawn from train shards disjoint from
     # fit. All 34 validation shards are consumed by calib+test, so unused
     # train shards are the only genuinely-unseen pool.
@@ -149,6 +162,12 @@ def assign_shards(
     train_shards = sorted(train_shards)
     val_shards = sorted(val_shards)
 
+    # Resolve the sentinel first: everything below is count arithmetic, and
+    # -1 would quietly mean "one fewer than all" in every one of those sums.
+    counts = dict(counts)
+    if counts["fit"] == ALL_SHARDS:
+        counts["fit"] = len(train_shards) - counts.get("holdout", 0)
+
     need_train = counts["fit"] + counts.get("holdout", 0)
     need_val = counts["calib"] + counts["test"]
     if len(train_shards) < need_train or len(val_shards) < need_val:
@@ -172,6 +191,9 @@ def assign_shards(
         ],
     }
     if counts.get("holdout"):
+        # Taken from AFTER fit, so the two are disjoint by construction --
+        # including when fit was ALL_SHARDS, which is why the sentinel is
+        # resolved to (all - holdout) rather than to all.
         assign["holdout"] = train_shards[
             counts["fit"] : counts["fit"] + counts["holdout"]
         ]
