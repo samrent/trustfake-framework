@@ -16,6 +16,11 @@ posterior mean, Eq. 5). Three instantiations, per the paper's ablation:
            it falls back to the sample-wise weight sg(s_m) x sg(s_m) (the DKL
            weight). "Breaking asymmetry": no stop-gradient on Dm.
   * "kl"   KL(s_m || s_n) on the posterior means. Valid, slightly weaker.
+
+All three vanish when the two sides agree: the IKL cross-entropy term has its
+self-discrepancy floor (the entropy of the clean side) subtracted, which is
+gradient-free and so leaves training bit-identical while making `beta`
+comparable across modes.
   * "l2"   squared distance in eta-space. Valid, slightly weaker.
 
 `m` is the clean side, `n` the adversarial side.
@@ -106,4 +111,25 @@ class LogDirichletDivergence(nn.Module):
 
         wmse = (self.ikl_alpha / 4.0) * (weight * (dm - dn) ** 2).sum(dim=(1, 2))
         ce = -self.ikl_beta * (s_m.detach() * torch.log(s_n + self.eps)).sum(dim=1)
-        return (wmse + ce).mean()
+
+        # Subtract the self-discrepancy floor, so D(eta, eta) == 0 like the
+        # other two modes.
+        #
+        # The `ce` term is a CROSS-entropy, not a KL: at eta_n == eta_m it does
+        # not vanish, it becomes the entropy H(s_m) -- about ln(C), which is
+        # 1.0986 for three classes. Left in, D is not a discrepancy at all but
+        # a discrepancy plus a large offset, with three consequences:
+        # `train_l_rea` reads ~97% constant and says nothing about how well
+        # clean and adversarial evidence align; L_REA -> 0 is unreachable; and
+        # `beta` means something entirely different per mode, so an ablation
+        # across ikl|kl|l2 at fixed beta compares scales rather than
+        # mechanisms (measured at beta=1: ikl 2.198 vs kl 1.099 vs l2 1.100,
+        # against 1.099 for REA switched off completely).
+        #
+        # The floor is built from the already-detached s_m, so it carries no
+        # gradient: every gradient is bit-identical with and without this
+        # (verified to 0.0e+00 on both inputs). Optimisation is unchanged;
+        # only the reported value becomes a quantity that can be read.
+        s_sg = s_m.detach()
+        floor = -self.ikl_beta * (s_sg * torch.log(s_sg + self.eps)).sum(dim=1)
+        return (wmse + ce - floor).mean()

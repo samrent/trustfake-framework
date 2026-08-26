@@ -168,7 +168,68 @@ def grid_c(epochs: int) -> list[dict]:
     ]
 
 
-GRIDS = {"A": grid_a, "B": grid_b, "C": grid_c}
+#: Config group needed by any arm with an evidential head.
+_EVIDENTIAL = {
+    "wrapper": "evidential",
+    "loss": "evidential",
+    "uncertainty_score": "evidential_predictive_entropy",
+}
+
+
+def grid_e(epochs: int) -> list[dict]:
+    """EV-AT and its ablation ladder -- the PI's own method, decomposed.
+
+    The headline row is `ev_at`. The rest exist because "does EV-AT help" is
+    a far less useful answer than "which part of it does the work", and that
+    second question is the one an independent harness can ask that a method's
+    own authors cannot easily ask of their own paper.
+
+    The ladder isolates one component per rung:
+
+        ev_only        evidential head, NO adversary  -- separates "evidential"
+                       from "adversarially trained", and is the rung that
+                       silently produced a NaN loss until the loss_input fix.
+        ev_at_b0       adversary, REA switched off (beta=0)
+        ev_at          full: adversary + REA
+        ev_at_awp      + weight-space perturbation, which the paper reports as
+                       an additional, non-substitutable gain
+        ev_at_kl / _l2 the same beta with a different discrepancy. Comparable
+                       only because every mode's self-discrepancy floor is now
+                       subtracted; before that, beta=1 meant ~1.10 of constant
+                       under ikl and ~0.0001 of signal under kl.
+
+    `pgd_at` from grid A is the fourth corner: adversarial but not evidential.
+    """
+    base = {**_EVIDENTIAL, "adv_eps": EPS, "adv_steps": STEPS}
+    return [
+        {"name": "e8_ev_only", "pipe": "standard", **_EVIDENTIAL},
+        {"name": "e8_ev_at_b0", "pipe": "evidential_adversarial", **base, "beta": 0.0},
+        {"name": "e8_ev_at", "pipe": "evidential_adversarial", **base, "beta": 1.0},
+        {
+            "name": "e8_ev_at_awp",
+            "pipe": "evidential_adversarial",
+            **base,
+            "beta": 1.0,
+            "awp_gamma": 0.01,
+        },
+        {
+            "name": "e8_ev_at_kl",
+            "pipe": "evidential_adversarial",
+            **base,
+            "beta": 1.0,
+            "rea_mode": "kl",
+        },
+        {
+            "name": "e8_ev_at_l2",
+            "pipe": "evidential_adversarial",
+            **base,
+            "beta": 1.0,
+            "rea_mode": "l2",
+        },
+    ]
+
+
+GRIDS = {"A": grid_a, "B": grid_b, "C": grid_c, "E": grid_e}
 
 
 def build_grid(strategy: str, epochs: int) -> list[dict]:
@@ -181,7 +242,20 @@ def build_grid(strategy: str, epochs: int) -> list[dict]:
 
 
 def _overrides(cfg: dict, profile: str, epochs: int, batch: int, workers: int) -> list:
-    keys = ("adv_eps", "adv_steps", "trades_beta", "at_kl_beta", "lambda_reg")
+    keys = (
+        "adv_eps",
+        "adv_steps",
+        "trades_beta",
+        "at_kl_beta",
+        "lambda_reg",
+        "beta",
+        "rea_mode",
+        "ikl_ema",
+        "awp_gamma",
+    )
+    # Config GROUPS, not values -- hydra selects these with `key=value` at the
+    # top level, same syntax here but a different mechanism.
+    groups = ("wrapper", "loss", "uncertainty_score")
     over = [
         f"experiment.name={cfg['name']}",
         f"experiment.training_pipe={cfg['pipe']}",
@@ -192,6 +266,7 @@ def _overrides(cfg: dict, profile: str, epochs: int, batch: int, workers: int) -
         "adv_warmup_epochs=2",
     ]
     over += [f"{k}={cfg[k]}" for k in keys if k in cfg]
+    over += [f"{g}={cfg[g]}" for g in groups if g in cfg]
     return over
 
 

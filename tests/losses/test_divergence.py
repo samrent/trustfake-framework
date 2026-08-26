@@ -68,3 +68,46 @@ def test_global_stats_update_and_use():
 def test_unknown_mode_raises():
     with pytest.raises(ValueError, match="mode must be"):
         LogDirichletDivergence(4, mode="js")
+
+
+@pytest.mark.parametrize("mode", ["ikl", "kl", "l2"])
+def test_self_discrepancy_is_zero(mode):
+    """D(eta, eta) must be 0, or `beta` means a different thing per mode and
+    an ablation across modes compares scales rather than mechanisms. IKL's
+    cross-entropy term does not vanish at identity on its own -- it becomes
+    the entropy of the clean side, about ln(C) -- so its floor is subtracted."""
+    torch.manual_seed(0)
+    eta = torch.rand(8, 3).abs() + 0.5
+    divergence = LogDirichletDivergence(num_classes=3, mode=mode)
+
+    assert float(divergence(eta, eta)) == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("mode", ["ikl", "kl", "l2"])
+def test_discrepancy_is_positive_when_the_sides_differ(mode):
+    """Subtracting the floor must not flatten the signal it sits on."""
+    torch.manual_seed(0)
+    eta = torch.rand(8, 3).abs() + 0.5
+    divergence = LogDirichletDivergence(num_classes=3, mode=mode)
+
+    assert float(divergence(eta, eta * 2.0)) > 1e-4
+
+
+def test_subtracting_the_floor_leaves_every_gradient_untouched():
+    """The floor is built from the already-detached clean side, so training is
+    bit-identical -- only the reported number changes. If this ever fails, the
+    fix has started altering optimisation, which it must not."""
+    torch.manual_seed(0)
+    divergence = LogDirichletDivergence(num_classes=3, mode="ikl")
+    eta_m = torch.randn(8, 3, requires_grad=True)
+    eta_n = torch.randn(8, 3, requires_grad=True)
+
+    loss = divergence(eta_m, eta_n)
+    grads = torch.autograd.grad(loss, [eta_m, eta_n], retain_graph=True)
+
+    s = torch.softmax(eta_m, dim=1).detach()
+    floor = -(s * torch.log(s + 1e-12)).sum(dim=1).mean()
+    shifted = torch.autograd.grad(loss + floor, [eta_m, eta_n])
+
+    for a, b in zip(grads, shifted, strict=True):
+        assert torch.equal(a, b)
