@@ -52,17 +52,17 @@ AXIS = {
 }
 
 COLUMNS = (
-    ("clean", "nat_accuracy_top1"),
-    ("PGD", "pgd_accuracy_top1"),
-    ("AutoAttack", "autoattack_accuracy_top1"),
-    ("Square", "square_accuracy_top1"),
-    ("fd-AUROC", "nat_fd_auroc"),
-    ("@ACE", "ace_uint8_fd_auroc"),
-    ("@overconf", "overconf_fd_auroc"),
-    ("resilience", None),
-    ("rr clean", "nat_moderation_residual_risk"),
-    ("rr @ACE", "ace_uint8_moderation_residual_risk"),
-    ("n_op", "nat_n_operating_points"),
+    ("accuracy", "clean", "nat_accuracy_top1"),
+    ("accuracy", "under PGD", "pgd_accuracy_top1"),
+    ("accuracy", "under AutoAttack", "autoattack_accuracy_top1"),
+    ("accuracy", "under Square", "square_accuracy_top1"),
+    ("failure detection", "clean", "nat_fd_auroc"),
+    ("failure detection", "under ACE", "ace_uint8_fd_auroc"),
+    ("failure detection", "under overconf", "overconf_fd_auroc"),
+    ("confidence", "resilience", None),
+    ("residual risk", "clean", "nat_moderation_residual_risk"),
+    ("residual risk", "under ACE", "ace_uint8_moderation_residual_risk"),
+    ("operating", "points", "nat_n_operating_points"),
 )
 
 FINDINGS = (
@@ -128,8 +128,112 @@ def _fmt(value, metrics, key=None):
     return f"<td>{html.escape(str(value))}</td>"
 
 
+#: Readable method names. The config slugs (e8_ev_at_b0) are addresses, not
+#: labels -- nobody should need the repo open to decode a chart point.
+DISPLAY = {
+    "e8_standard": "standard (no defence)",
+    "e8_pgd_at": "PGD-AT",
+    "e8_trades": "TRADES",
+    "e8_at_kl": "AT+KL hybrid",
+    "e8_mart": "MART",
+    "e8_at_conf": "confidence-AT",
+    "e8_conf_reg": "confidence penalty",
+    "e8_ev_only": "evidential only",
+    "e8_ev_at_b0": "EV-AT, REA off",
+    "e8_ev_at": "EV-AT (full)",
+    "e8_ev_at_awp": "EV-AT + AWP",
+    "e8_ev_at_kl": "EV-AT, KL divergence",
+    "e8_ev_at_l2": "EV-AT, L2 divergence",
+}
+
+
+ARM_GLOSSARY = (
+    ("standard (no defence)", "plain cross-entropy training; the control."),
+    ("PGD-AT", "trains on worst-case inputs found by 7-step PGD (Madry)."),
+    (
+        "TRADES",
+        "clean cross-entropy plus a KL term pulling adversarial "
+        "predictions toward clean ones (Zhang et al.).",
+    ),
+    (
+        "confidence-AT",
+        "adversarial training whose inner attack INFLATES "
+        "confidence in the frozen prediction instead of flipping the label.",
+    ),
+    (
+        "confidence penalty",
+        "no adversary; a direct penalty on confident mistakes added to the clean loss.",
+    ),
+    (
+        "evidential head only",
+        "Dirichlet evidential head (the PI's "
+        "uncertainty model), no adversarial training.",
+    ),
+    (
+        "EV-AT, REA off (\u03b2=0)",
+        "evidential head + evidence-targeted "
+        "adversary, but the robust evidence-alignment loss disabled.",
+    ),
+    (
+        "EV-AT (full)",
+        "the PI's method: evidential head, evidence-targeted "
+        "adversary, and the REA alignment term at \u03b2=1.",
+    ),
+    ("EV-AT + AWP", "EV-AT plus adversarial weight perturbation."),
+    (
+        "EV-AT, KL / L2 divergence",
+        "EV-AT with the alignment discrepancy "
+        "swapped from IKL to plain KL or L2 (ablation of the divergence).",
+    ),
+)
+
+METRIC_GLOSSARY = (
+    (
+        "accuracy under PGD / AutoAttack / Square",
+        "share of the 1000 images "
+        "still classified correctly under each prediction attack at "
+        "\u03b5 = 8/255. PGD is the standard gradient attack; AutoAttack is "
+        "the stronger ensemble; Square uses no gradients at all, so it cannot "
+        "be fooled by gradient masking.",
+    ),
+    (
+        "failure-detection AUROC",
+        "how well the model's own uncertainty ranks "
+        "its mistakes. 1.0 = perfect, 0.5 = useless, below 0.5 = INVERTED: "
+        "abstaining on the most uncertain samples selects the correct ones "
+        "and keeps the errors.",
+    ),
+    (
+        "ACE / overconf / underconf",
+        "confidence attacks: they leave the "
+        "predicted label untouched and move only the confidence. ACE is "
+        "Galil & El-Yaniv's attack, quantised to the uint8 pixel grid (a "
+        "file-upload attacker); over/underconfidence are the label-free "
+        "directions of the same family.",
+    ),
+    (
+        "confidence resilience",
+        "mean failure-detection AUROC under ACE and "
+        "overconfidence -- the sweep's ranking objective.",
+    ),
+    (
+        "residual risk",
+        "share of wrong automatic decisions made by the "
+        "frozen moderation gate (thresholds fitted once on clean data, "
+        "SLA 0.05). The proposal's own deployment indicator.",
+    ),
+    (
+        "distinct operating points",
+        "how many different thresholds the "
+        "uncertainty score actually offers. About 1000 is healthy here; 1 "
+        "means an attack collapsed the score to a constant -- the abstention "
+        "rule is left with 'accept everything'.",
+    ),
+)
+
+
 def _short(name):
-    return name.removeprefix("e8_")
+    return DISPLAY.get(name, name.removeprefix("e8_"))
 
 
 def _spread(desired, gap=15.0, lo=None, hi=None):
@@ -338,12 +442,12 @@ def build_page(strategy):
     for name, _, metrics, _res in ordered:
         if not metrics:
             table_rows.append(
-                f"<tr><td class='arm'>{name}</td>"
+                f"<tr><td class='arm'>{_short(name)}</td>"
                 f"<td class='na' colspan='{len(COLUMNS)}'>pending</td></tr>"
             )
             continue
         cells = []
-        for _, key in COLUMNS:
+        for _, _sub, key in COLUMNS:
             if key is None:
                 value = confidence_resilience(metrics)
             else:
@@ -355,7 +459,9 @@ def build_page(strategy):
 
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     rows_joined = "".join(table_rows)
-    head = "".join(f"<th>{name}</th>" for name, _ in COLUMNS)
+    head = "".join(
+        f"<th>{name}<br><span class='sub'>{sub}</span></th>" for name, sub, _ in COLUMNS
+    )
     findings = "".join(f"<li>{html.escape(f)}</li>" for f in FINDINGS)
     caveats = "".join(f"<li>{html.escape(c)}</li>" for c in CAVEATS)
     legend = " ".join(
@@ -366,6 +472,12 @@ def build_page(strategy):
             ("confidence axis", "#c2571f"),
             ("evidential", "#7b5ed1"),
         )
+    )
+    arm_gloss = "".join(
+        f"<dt>{term}</dt><dd>{desc}</dd>" for term, desc in ARM_GLOSSARY
+    )
+    metric_gloss = "".join(
+        f"<dt>{term}</dt><dd>{desc}</dd>" for term, desc in METRIC_GLOSSARY
     )
     n2 = f"<p class='muted'>{html.escape(note2)}</p>" if note2 else ""
     n3 = f"<p class='muted'>{html.escape(note3)}</p>" if note3 else ""
@@ -413,6 +525,9 @@ def build_page(strategy):
  td.bad {{ background: var(--badbg); color: var(--bad); font-weight: 600; }}
  td.good {{ background: var(--goodbg); color: var(--good); }}
  li {{ margin: .55rem 0; }}
+ th .sub {{ font-weight: 400; font-size: 12px; }}
+ .gloss dt {{ font-weight: 600; margin-top: .6rem; }}
+ .gloss dd {{ margin: .1rem 0 0 0; color: var(--mut); }}
 </style></head><body>
 <h1>TrustFake — 8/255 sweep, live results</h1>
 <p class="muted">Generated {stamp}, rebuilt from the metrics CSVs on every
@@ -434,6 +549,10 @@ gradients signature.</p>
 <h2>Full table</h2>
 <div class="wrap"><table>
 <tr><th class="arm">arm</th>{head}</tr>{rows_joined}</table></div>
+<h2>What the arms are</h2>
+<dl class="gloss">{arm_gloss}</dl>
+<h2>What the numbers mean</h2>
+<dl class="gloss">{metric_gloss}</dl>
 <h2>Findings so far</h2><ul>{findings}</ul>
 <h2>Read with</h2><ul>{caveats}</ul>
 </body></html>"""
