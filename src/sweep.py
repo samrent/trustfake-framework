@@ -62,7 +62,13 @@ FULL_SPLIT_CONDITIONS = (
     "ace_uint8",
     "overconf",
     "underconf",
+    # The REALISTIC axis, one condition per perturbation class the proposal
+    # names verbatim -- "compression, resizing, re-encoding". The proposal's
+    # evaluation triad is clean / realistic / adversarial; with a single
+    # corruption the middle axis was a token rather than an axis.
     "+corruption=jpeg",
+    "+corruption=downscale",
+    "+corruption=webp",
 )
 
 #: The expensive conditions -- these are what make the cap necessary.
@@ -383,6 +389,13 @@ def rank(names: list[str], clean_floor: float, out_dir: pathlib.Path) -> list[di
                 "ace_uint8_fd_auroc": metrics.get("ace_uint8_fd_auroc"),
                 "overconf_fd_auroc": metrics.get("overconf_fd_auroc"),
                 "nat_aurc": metrics.get("nat_aurc"),
+                # WP4's own deployment indicators, at thresholds frozen on
+                # clean calib. Confidence resilience is the mechanism metric;
+                # THIS is the proposal's endpoint -- "coverage, residual risk,
+                # and review rate" -- so the ranking carries both.
+                "residual_risk_clean": metrics.get("nat_moderation_residual_risk"),
+                "residual_risk_ace": metrics.get("ace_uint8_moderation_residual_risk"),
+                "review_rate_ace": metrics.get("ace_uint8_moderation_review_rate"),
                 "n_operating_points": metrics.get("nat_n_operating_points"),
                 # A configuration below the floor is excluded from the
                 # ranking rather than deleted: "kept confidence honest by
@@ -408,6 +421,12 @@ def rank(names: list[str], clean_floor: float, out_dir: pathlib.Path) -> list[di
     payload = {
         "objective": "mean failure-detection AUROC under ace_uint8 + overconf",
         "clean_accuracy_floor": clean_floor,
+        "wp4_note": (
+            "residual_risk and review_rate are WP4's deliverable indicators "
+            "(D4), measured at thresholds frozen on clean calib. The proposal "
+            "names them as the deployment-oriented endpoint; confidence "
+            "resilience is the mechanism that predicts them."
+        ),
         "provenance": (
             "Sweep profile: small fit/calib/test. These numbers RANK "
             "configurations; they are not results. Re-run the winner at "
@@ -427,8 +446,8 @@ def rank(names: list[str], clean_floor: float, out_dir: pathlib.Path) -> list[di
         f"**{payload['provenance']}**",
         "",
         "| # | config | clean acc | conf. resilience | clean AUROC(fail) | "
-        "ace_uint8 | overconf | n_op |",
-        "|---|---|---|---|---|---|---|---|",
+        "ace_uint8 | overconf | resid. risk clean>ACE | review@ACE | n_op |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for i, r in enumerate(eligible, 1):
 
@@ -439,7 +458,8 @@ def rank(names: list[str], clean_floor: float, out_dir: pathlib.Path) -> list[di
             f"| {i} | `{r['name']}` | {fmt(r['clean_accuracy'])} | "
             f"{fmt(r['confidence_resilience'])} | {fmt(r['clean_fd_auroc'])} | "
             f"{fmt(r['ace_uint8_fd_auroc'])} | {fmt(r['overconf_fd_auroc'])} | "
-            f"{r['n_operating_points']} |"
+            f"{fmt(r['residual_risk_clean'])} > {fmt(r['residual_risk_ace'])} | "
+            f"{fmt(r['review_rate_ace'])} | {r['n_operating_points']} |"
         )
     excluded = [r for r in rows if r not in eligible]
     if excluded:
