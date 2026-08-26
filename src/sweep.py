@@ -52,84 +52,72 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 SCORING_CONDITIONS = ("clean", "ace_uint8", "overconf")
 
 
-#: L_inf budgets, in units of 1/255. 8/255 is the field standard -- Madry's
-#: setting and RobustBench's headline column -- so it is the only number in
-#: this grid that makes a result comparable to everyone else's, which is what
-#: a BASELINE is for. It is included despite the forensic argument against it
-#: (a ball that wide erases the small-amplitude high-frequency evidence a
-#: deepfake detector reads, and wp1 recorded training collapsing onto a
-#: constant output there). That argument is a claim about this task, and a
-#: claim is worth testing rather than designing around: if 8/255 collapses,
-#: that is the finding that justifies the forensic regime to a reviewer who
-#: will otherwise ask why the standard budget is missing.
-EPS_LADDER = (1, 2, 4, 8)
+#: THE budget. Every experiment is pinned here -- 8/255 is Madry's setting and
+#: RobustBench's headline column, so it is the number that makes a result
+#: comparable to the field rather than only to itself.
+#:
+#: The forensic argument cuts the other way and is on the record: a ball this
+#: wide erases the small-amplitude high-frequency evidence a deepfake detector
+#: reads, and wp1 recorded training collapsing onto a constant output here.
+#: Pinning means that argument is now something the runs TEST rather than
+#: something the design assumes -- so `rank` flags collapse explicitly
+#: (see `_collapse_flag`) instead of letting a degenerate model report a
+#: respectable-looking accuracy at the majority class.
+EPS = 8 / 255
+
+#: Inner-loop steps for every adversarial arm. Fixed, not swept: on the
+#: measured 1-4/255 ladder, 3 vs 7 steps moved confidence resilience by less
+#: than one seed's noise (0.696 vs 0.699 at 1/255), so the knob does not earn
+#: a dimension.
+STEPS = 7
 
 
 def grid_a(epochs: int) -> list[dict]:
-    """Strategy A: the knobs of the arms that already exist."""
-    cfgs: list[dict] = [
-        {"name": "sw_std", "pipe": "standard", "adv_eps": 2 / 255},
+    """The arms that already exist, one configuration each at EPS."""
+    return [
+        {"name": "e8_standard", "pipe": "standard", "adv_eps": EPS},
+        {"name": "e8_pgd_at", "pipe": "pgd_at", "adv_eps": EPS, "adv_steps": STEPS},
+        {
+            "name": "e8_trades",
+            "pipe": "trades",
+            "adv_eps": EPS,
+            "adv_steps": STEPS,
+            "trades_beta": 6.0,
+        },
     ]
-    for eps in EPS_LADDER:
-        for steps in (3, 7):
-            cfgs.append(
-                {
-                    "name": f"sw_atpgd_e{eps}_s{steps}",
-                    "pipe": "pgd_at",
-                    "adv_eps": eps / 255,
-                    "adv_steps": steps,
-                }
-            )
-    for eps in EPS_LADDER:
-        for beta in (3, 6):
-            cfgs.append(
-                {
-                    "name": f"sw_trades_e{eps}_b{beta}",
-                    "pipe": "trades",
-                    "adv_eps": eps / 255,
-                    "adv_steps": 7,
-                    "trades_beta": float(beta),
-                }
-            )
-    return cfgs
 
 
 def grid_b(epochs: int) -> list[dict]:
     """Strategy B: the AT + consistency-KL hybrid. Recommended to skip."""
     return [
         {
-            "name": f"sw_atkl_e{eps}_b{beta}",
+            "name": "e8_at_kl",
             "pipe": "at_kl",
-            "adv_eps": eps / 255,
-            "adv_steps": 7,
-            "at_kl_beta": float(beta),
-        }
-        for eps in (2, 4)
-        for beta in (3, 6)
+            "adv_eps": EPS,
+            "adv_steps": STEPS,
+            "at_kl_beta": 6.0,
+        },
+        {
+            "name": "e8_mart",
+            "pipe": "mart",
+            "adv_eps": EPS,
+            "adv_steps": STEPS,
+            "mart_beta": 6.0,
+        },
     ]
 
 
 def grid_c(epochs: int) -> list[dict]:
     """Strategy C: the confidence-targeted defences."""
-    cfgs = [
+    return [
+        {"name": "e8_at_conf", "pipe": "at_conf", "adv_eps": EPS, "adv_steps": STEPS},
         {
-            "name": f"sw_atconf_e{eps}",
-            "pipe": "at_conf",
-            "adv_eps": eps / 255,
-            "adv_steps": 7,
-        }
-        for eps in (2, 4)
-    ]
-    cfgs += [
-        {
-            "name": f"sw_confreg_l{lam}",
+            "name": "e8_conf_reg",
             "pipe": "conf_reg",
-            "adv_eps": 2 / 255,
-            "lambda_reg": lam,
-        }
-        for lam in (0.5, 1.0, 2.0)
+            "adv_eps": EPS,
+            "lambda_reg": 1.0,
+        },
     ]
-    return cfgs
 
 
 GRIDS = {"A": grid_a, "B": grid_b, "C": grid_c}
@@ -225,6 +213,24 @@ def confidence_resilience(metrics: dict[str, float]) -> float | None:
     return sum(scores) / len(scores)
 
 
+def _collapse_flag(metrics: dict[str, float]) -> str | None:
+    """Has training degenerated to a near-constant output?
+
+    The failure mode wp1 recorded at this budget. It does not look like a
+    failure: a model that always answers the majority class posts a
+    respectable accuracy and a plausible loss curve. What gives it away is the
+    uncertainty score going nearly constant, which collapses the number of
+    distinct operating points on the risk-coverage curve -- a healthy run here
+    produced 3295 of them, a degenerate one produces a handful. Selective
+    metrics computed over a handful of operating points are not wrong so much
+    as vacuous, and they must not be ranked as if they were results.
+    """
+    n_op = metrics.get("nat_n_operating_points")
+    if n_op is not None and n_op < 32:
+        return f"near-constant uncertainty ({int(n_op)} operating points)"
+    return None
+
+
 def rank(names: list[str], clean_floor: float, out_dir: pathlib.Path) -> list[dict]:
     rows = []
     for name in names:
@@ -234,6 +240,7 @@ def rank(names: list[str], clean_floor: float, out_dir: pathlib.Path) -> list[di
             continue
         clean = metrics.get("nat_accuracy_top1", metrics.get("nat_accuracy"))
         resilience = confidence_resilience(metrics)
+        collapse = _collapse_flag(metrics)
         rows.append(
             {
                 "name": name,
@@ -249,6 +256,7 @@ def rank(names: list[str], clean_floor: float, out_dir: pathlib.Path) -> list[di
                 # refusing to classify" is a real failure mode and the table
                 # should show it happened.
                 "meets_floor": (clean is not None and clean >= clean_floor),
+                "collapsed": collapse,
                 "status": "ok",
             }
         )
@@ -258,6 +266,7 @@ def rank(names: list[str], clean_floor: float, out_dir: pathlib.Path) -> list[di
         for r in rows
         if r.get("status") == "ok"
         and r.get("meets_floor")
+        and not r.get("collapsed")
         and r.get("confidence_resilience") is not None
     ]
     eligible.sort(key=lambda r: r["confidence_resilience"], reverse=True)
@@ -303,7 +312,9 @@ def rank(names: list[str], clean_floor: float, out_dir: pathlib.Path) -> list[di
     if excluded:
         lines += ["", "## Excluded", ""]
         for r in excluded:
-            why = r.get("status") if r.get("status") != "ok" else "below clean floor"
+            why = r.get("status")
+            if why == "ok":
+                why = r.get("collapsed") or "below clean floor"
             lines.append(f"- `{r['name']}` — {why}")
     (out_dir / "sweep_ranking.md").write_text("\n".join(lines) + "\n")
     return eligible
