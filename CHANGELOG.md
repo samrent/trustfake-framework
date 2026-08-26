@@ -1,5 +1,66 @@
 # Changelog
 
+## TF_03 — 2026-08-26
+
+Three adversarial audits over the TF_02 code, then the fixes. 31 bugs, every
+one reproduced by running it before it was fixed and by a test that fails
+without the fix. 696 unit tests (was 545). Every experiment is now pinned at
+**8/255**.
+
+None of these announced itself. Each one trained, converged and produced a
+plausible curve — which is why they are listed rather than quietly repaired.
+
+### Results-corrupting
+- **BatchNorm contamination on every adversarial arm.** The inner PGD ran the
+  model in train mode, so a 10-step adversary made 12 BatchNorm updates per
+  batch instead of 1: every intermediate iterate folded into the running
+  statistics, and every attack forward normalised by a perturbed batch rather
+  than by the deployed model. On the default ResNet-18 this touched every WP3
+  number. Each arm now makes exactly the updates its objective justifies.
+- **A minimum-norm attack that lost to plain PGD.** PDPGD reported robustness
+  a fixed-budget PGD refuted at the same radius (0.719 vs 0.086 success on one
+  seed) — an un-normalised primal step that tracked the model's logit scale,
+  and a proximal threshold three orders of magnitude below the perturbation it
+  was meant to shrink. All four minimum-norm attacks are now guaranteed never
+  to lose to a fixed-budget witness at the same radius, and that guarantee is
+  a test.
+- **The geometry-controlled baseline printed the raw split's floor.** On real
+  shards the `nonsquare` subset's true floor is 1.0000 where the headline
+  printed 0.6657, so a model scoring 0.85 read as clearing a bar it was far
+  below.
+- **ECE understated by 26x** on saturated confidence — the exact regime it is
+  reported beside torchmetrics' `ece` in.
+
+### Silent selection failures
+- `mode: max` was hardcoded while `monitor` was configurable, so any
+  lower-is-better metric kept the **worst** epoch.
+- Robust validation attacked at the warm-up epsilon, so on a frozen model the
+  metric fell 1.0000 -> 0.0352 across five epochs purely from the ramp, and the
+  checkpoint kept epoch 0.
+- **AWP was a no-op on `conf_reg`**: the planned with/without ablation would
+  have produced two bit-identical arms.
+- `standard`, `conf_reg` and `evidential_adversarial` accepted
+  `robust_val_steps`, dropped it silently, then died on "metric not available"
+  — so the classical baselines could be selected on robustness and the
+  flagship arms could not.
+
+### Also
+`ace` and `ace_uint8` both logged as `ace` (one condition overwriting the
+other); `ParamACE` reported its label-free default as label-using; `real_class`
+never reached the detection AUROC; the manifest's leakage firewall was
+`assert`, stripped by `python -O`; EV-AT's IKL statistics absorbed validation
+rows via Lightning's sanity pass; the four minimum-norm attacks disagreed about
+what a failed sample reports.
+
+### Added
+`src/sweep.py` — a method comparison pinned at 8/255, ranked on **confidence
+resilience** (mean failure-detection AUROC under `ace_uint8` and `overconf`,
+subject to a clean-accuracy floor) rather than on robust accuracy. It detects
+training collapse explicitly: a degenerate model posts a respectable accuracy
+at the majority class, and what exposes it is the uncertainty score going
+near-constant, so anything under 32 distinct operating points is flagged and
+excluded rather than scored.
+
 ## TF_02 — 2026-08-25
 
 Second milestone: the attack and defence surfaces are complete, and the two

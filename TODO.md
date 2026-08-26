@@ -51,7 +51,14 @@ now the *only* thing between the repo and a paper-shaped result.
       against `width == height → fake`, not against 0.5. Then re-run the
       headline on a geometry-controlled subset
       (`datamodule.datamodule.geometry_filter=matched`) and report both.
-- [ ] Pick a forensic epsilon and confirm PGD-AT does not collapse at 8/255
+- [x] Epsilon is **pinned at 8/255** for every experiment — Madry's setting
+      and RobustBench's headline column, so results are comparable to the
+      field rather than only to each other. wp1 recorded training collapsing
+      onto a constant output at this budget; that is now a claim the runs
+      test rather than one the design routes around, and `src/sweep.py`
+      flags collapse instead of scoring it. The measured 1-4/255 ladder
+      found no collapse at 4/255 (clean 0.7005), so any threshold sits
+      above it.
       (use `adv_warmup_epochs` or lower `adv_eps`, e.g. 2/255).
 
 ## 2. Adaptive evaluation of the confidence-axis defences (the real risk)

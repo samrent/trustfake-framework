@@ -40,7 +40,9 @@ adv_steps: 10    # PGD steps of the adversary
 # Adversarial-training arms (experiment.training_pipe: pgd_at | trades |
 # at_kl | mart | at_conf). Report at forensic epsilons: an 8/255 ball can
 # erase deepfake evidence and collapse training onto a constant output, so
-# warm up eps or lower it (e.g. adv_eps: 0.00784 = 2/255).
+# warm up eps rather than lowering it: 8/255 is pinned so results stay
+# comparable to the field, and `adv_warmup_epochs` is the knob for easing
+# into it.
 adv_warmup_epochs: 0  # ramp eps over the first N epochs (0 = off)
 # beta weights a different term in each arm, so each gets its own key: one
 # shared value would make three incomparable settings look like one.
