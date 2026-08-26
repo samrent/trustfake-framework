@@ -216,6 +216,7 @@ class SIDSetDataModule(L.LightningDataModule):
         normalization_layer: nn.Module | None = None,
         geometry_filter: str = "none",
         squarecrop: bool = False,
+        limit_test: int | None = None,
     ) -> None:
         super().__init__()
         self.data_dir = str(data_dir)
@@ -238,6 +239,7 @@ class SIDSetDataModule(L.LightningDataModule):
             logger.error(msg)
             raise ValueError(msg)
         self.geometry_filter = geometry_filter
+        self.limit_test = limit_test
         self.squarecrop = bool(squarecrop)
 
         self.num_classes: int = 3
@@ -396,7 +398,22 @@ class SIDSetDataModule(L.LightningDataModule):
         self._train_ds = _wrap(fit_split["train"])
         self._val_ds = _wrap(fit_split["test"])
         self._calib_ds = _wrap(dataset["calib"])
-        self._test_ds = _wrap(dataset["test"])
+        test_split = dataset["test"]
+        if self.limit_test is not None and self.limit_test < test_split.num_rows:
+            # A PREFIX, not a random sample: the first N rows of the same
+            # ordered split, so the capped set is nested inside the full one
+            # and a number from it is a number from a subset of the same
+            # split rather than from a different draw. That is what lets an
+            # expensive attack (Square at 500 queries is ~7h on the full test
+            # set, per configuration) be reported beside a cheap one without
+            # the two describing different populations.
+            #
+            # calib is deliberately NOT capped: the thresholds and temperature
+            # must be fitted on the same calibration data for every condition,
+            # or a cheap and an expensive condition are being read against
+            # different policies.
+            test_split = test_split.select(range(self.limit_test))
+        self._test_ds = _wrap(test_split)
         if "holdout" in dataset:
             self._holdout_ds = _wrap(dataset["holdout"])
 

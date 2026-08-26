@@ -46,10 +46,58 @@ import time
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
-#: Conditions every configuration is scored under. The two confidence attacks
-#: are the objective; `clean` supplies the floor. Deliberately short -- a
-#: sweep pays for its conditions once per configuration.
-SCORING_CONDITIONS = ("clean", "ace_uint8", "overconf")
+#: The cheap conditions. (Both groups are scored on the same capped
+#: split while conditions are being chosen -- see SUBSAMPLE_ROWS.)
+#:
+#: `ace_uint8` and `overconf` are the objective. `underconf` is the mirror of
+#: over-confidence and was implemented but never once run in wp1. `pgd` is the
+#: prediction-axis control and is not optional: the whole claim is that a
+#: confidence attack leaves accuracy bit-identical while destroying selective
+#: risk, and without an adjacent attack that DOES wreck accuracy, half that
+#: sentence has no evidence next to it. `jpeg` is the realistic-perturbation
+#: rung the proposal names outright ("compression, resizing, re-encoding").
+FULL_SPLIT_CONDITIONS = (
+    "clean",
+    "pgd",
+    "ace_uint8",
+    "overconf",
+    "underconf",
+    "+corruption=jpeg",
+)
+
+#: The expensive conditions -- these are what make the cap necessary.
+#:
+#: AutoAttack and Square are run-once-at-the-end jobs in their own right --
+#: Square at 500 queries is ~7h per configuration on the full split. The four
+#: minimum-norm attacks answer a different question from the fixed-budget
+#: ones: not "does the model survive at eps" but "how little does it take",
+#: which is the quantity a robustness curve should be read against. Capping
+#: the split is what makes them affordable; nesting is what keeps them
+#: comparable to the rows above.
+SUBSAMPLE_CONDITIONS = (
+    "autoattack",
+    "square",
+    "deepfool",
+    "cw",
+    "bb",
+    "pdpgd",
+)
+
+#: Rows every condition is scored on, cheap and expensive alike.
+#:
+#: One cap rather than two tiers, while the conditions themselves are still
+#: being chosen: a uniform n means every column of the table describes the
+#: same 1000 images, so nothing needs qualifying when the columns are read
+#: side by side, and the whole stack finishes fast enough to iterate on.
+#:
+#: The cost is precision. At n=1000 a rate carries roughly +/-1.5 points of
+#: binomial standard error, so small gaps between arms are NOT readable yet
+#: -- this size is for choosing conditions, not for reporting results. The
+#: cap is a prefix, so raising it later yields a superset and the numbers
+#: stay comparable across the change.
+SUBSAMPLE_ROWS = 1000
+
+SCORING_CONDITIONS = FULL_SPLIT_CONDITIONS + SUBSAMPLE_CONDITIONS
 
 
 #: THE budget. Every experiment is pinned here -- 8/255 is Madry's setting and
@@ -158,6 +206,16 @@ def _run(script: str, overrides: list, log: pathlib.Path) -> bool:
             check=False,
         )
     return proc.returncode == 0
+
+
+def _already_trained(name: str) -> bool:
+    """Does a checkpoint for this configuration exist?
+
+    Training is the expensive half and is deterministic given the seed, so a
+    re-run that only adds evaluation conditions should not pay for it twice.
+    """
+    root = pathlib.Path(os.environ["OUTPUT_PATH"]) / name
+    return any(root.rglob("*.ckpt"))
 
 
 def _latest_test_metrics(name: str) -> dict[str, float]:
@@ -340,6 +398,12 @@ def main() -> None:
     )
     ap.add_argument("--rank-only", action="store_true")
     ap.add_argument(
+        "--subsample",
+        type=int,
+        default=SUBSAMPLE_ROWS,
+        help="rows every condition is scored on (a prefix of the test split)",
+    )
+    ap.add_argument(
         "--only",
         default=None,
         help="comma-separated substrings; run only configurations whose name "
@@ -371,24 +435,44 @@ def main() -> None:
         for i, cfg in enumerate(cfgs, 1):
             t0 = time.time()
             over = _overrides(cfg, args.profile, args.epochs, args.batch, args.workers)
-            ok = _run("train.py", over, logs / f"train_{cfg['name']}.log")
-            print(
-                f"[{i}/{len(cfgs)}] train {cfg['name']}: "
-                f"{'ok' if ok else 'FAILED'} ({time.time() - t0:.0f}s)",
-                flush=True,
-            )
+            if _already_trained(cfg["name"]):
+                print(
+                    f"[{i}/{len(cfgs)}] train {cfg['name']}: skipped (checkpoint)",
+                    flush=True,
+                )
+                ok = True
+            else:
+                ok = _run("train.py", over, logs / f"train_{cfg['name']}.log")
+                print(
+                    f"[{i}/{len(cfgs)}] train {cfg['name']}: "
+                    f"{'ok' if ok else 'FAILED'} ({time.time() - t0:.0f}s)",
+                    flush=True,
+                )
             if not ok:
                 continue
+
             for cond in SCORING_CONDITIONS:
+                label = cond.replace("+corruption=", "corr_")
                 eval_over = [
                     f"experiment.name={cfg['name']}",
                     f"datamodule.datamodule.profile={args.profile}",
                     f"dataloaders.batch_size={args.batch}",
                     f"dataloaders.num_workers={args.workers}",
                 ]
-                if cond != "clean":
+                eval_over.append(f"datamodule.datamodule.limit_test={args.subsample}")
+                if cond.startswith("+"):
+                    eval_over.append(cond)
+                elif cond != "clean":
                     eval_over.append(f"+attack={cond}")
-                _run("test.py", eval_over, logs / f"eval_{cfg['name']}_{cond}.log")
+                e0 = time.time()
+                good = _run(
+                    "test.py", eval_over, logs / f"eval_{cfg['name']}_{label}.log"
+                )
+                print(
+                    f"      eval {cfg['name']} {label} [n={args.subsample}]: "
+                    f"{'ok' if good else 'FAILED'} ({time.time() - e0:.0f}s)",
+                    flush=True,
+                )
 
     ranked = rank(names, args.clean_floor, logs)
     print(f"\nranked {len(ranked)} configurations; wrote {logs}/sweep_ranking.md")

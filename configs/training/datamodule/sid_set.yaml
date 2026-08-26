@@ -32,6 +32,14 @@ datamodule:
   # AND evaluate with the same setting or it is a covariate shift, not a
   # control. Neither control removes the 'short side == 1024' residue.
   squarecrop: false
+  # Cap the TEST split to its first N rows (null = the whole split). A prefix,
+  # so the capped set is nested inside the full one and both describe the same
+  # population -- which is what lets an expensive attack be reported beside a
+  # cheap one. Square at 500 queries costs roughly 7h per configuration on the
+  # full test split; on 2000 rows it is minutes. calib is never capped: every
+  # condition must be read against thresholds fitted on the same calibration
+  # data, or the comparison is between policies rather than attacks.
+  limit_test: null
   # Optional normalization layer applied to inputs before the model forward
   # pass. Defaults to no-op (nn.Identity) when left null. Uncomment to enable
   # ImageNet normalization, for example:
