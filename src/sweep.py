@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import pathlib
 import subprocess
@@ -345,6 +346,13 @@ def confidence_resilience(metrics: dict[str, float]) -> float | None:
         for cond in ("ace_uint8", "overconf")
         if f"{cond}_fd_auroc" in metrics
     ]
+    # NaN means the metric is UNDEFINED -- seen live when the over-confidence
+    # attack drove an evidential arm's uncertainty to a single distinct value
+    # (n_op = 1), which is total saturation of the score, not a middling one.
+    # A NaN must not be averaged or sorted (every comparison is False, so it
+    # lands anywhere in the ranking); the arm is excluded and the exclusion
+    # is visible, while the saturation itself is the finding.
+    scores = [s for s in scores if math.isfinite(s)]
     if len(scores) < 2:
         # Both conditions or nothing: averaging one attack and calling it
         # resilience against two would rank the grid on half its objective.
