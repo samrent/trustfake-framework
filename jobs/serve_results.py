@@ -78,11 +78,13 @@ FINDINGS = (
     "outright: on ev_at_b0 the uncertainty score collapses to one distinct "
     "value (n_op = 1) -- a single operating point, accept everything. Such "
     "arms drop off chart 2 and are footnoted.",
-    "Classical label-axis training substantially repairs the confidence "
-    "axis, and full EV-AT (beta = 1) joins it -- against ev_at_b0's deleted "
-    "score, the evidence-alignment term REA is what does the work. Read "
-    "with the masking caveat: the confidence attacks are gradient-based "
-    "too, so evidential resilience needs a gradient-free confirmation.",
+    "REA is the load-bearing component of EV-AT, on BOTH axes. Flipping "
+    "beta 0 -> 1 takes AutoAttack accuracy from 0.014 to 0.491, and "
+    "gradient-free Square confirms 0.605 -- the evidence-alignment term "
+    "removes the gradient masking and delivers real robustness, while also "
+    "rescuing the confidence axis (resilience 0.754, near-tied with TRADES "
+    "at better clean accuracy). Residual caveat: a gradient-free confidence "
+    "attack is still the missing confirmation for the resilience number.",
 )
 
 CAVEATS = (
