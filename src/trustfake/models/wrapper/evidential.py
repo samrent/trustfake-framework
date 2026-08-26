@@ -54,12 +54,35 @@ class EvidentialWrapper(TrustFakeWrapper):
         alpha = self.evidence(logits) + 1.0
         return alpha, torch.log(alpha)
 
+    def loss_input(self, logits: Tensor) -> Tensor:
+        """`EvidentialLoss` consumes alpha, not logits."""
+        return self.dirichlet(logits)[0]
+
     def _from_logits(self, logits: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Logits -> (logits, posterior mean, prediction, entropy), in fp32.
+
+        The evidential head is computed at full precision even under autocast,
+        and deliberately so. The chain is evidence(logits) -> alpha -> log
+        alpha -> softmax -> entropy, and it starts with an exponential: in
+        bf16, with 8 bits of mantissa, a large logit overflows to inf, alpha
+        becomes inf, and the softmax then yields nan. It surfaces as
+        "uncertainty contains non-finite values" a long way from the cause.
+
+        Autocast is left ON for the backbone, which is where the time
+        actually goes -- this head is a handful of elementwise ops on a
+        (B, C) tensor, so making it exact costs nothing measurable and buys
+        back the arm. Not hypothetical: enabling bf16 broke evidential
+        training on the clean (non-adversarial) arm while EV-AT itself kept
+        running, so the failure was invisible on the flagship configuration
+        and only appeared on the ablation baseline.
+        """
         self.uncertainty_score = self.uncertainty_score.to(logits.device)
-        _, eta = self.dirichlet(logits)
-        probs = torch.softmax(eta / self.temperature, dim=1)  # posterior mean pi_bar
-        preds = torch.argmax(probs, dim=1)
-        uncertainty = self.uncertainty_score(probs)
+        with torch.autocast(device_type=logits.device.type, enabled=False):
+            logits32 = logits.float()
+            _, eta = self.dirichlet(logits32)
+            probs = torch.softmax(eta / self.temperature, dim=1)  # pi_bar
+            preds = torch.argmax(probs, dim=1)
+            uncertainty = self.uncertainty_score(probs)
         self.uncertainty_score.reset()
         return logits, probs, preds, uncertainty
 

@@ -30,7 +30,7 @@ class StandardTrainingModule(RobustValidationMixin, TrainingModule):
         Run the forward pass and compute the loss for a batch.
         """
         logits, probs, preds, uncertainty = self.model.forward(batch[0])
-        loss = self.model.loss_fn(logits, batch[1])
+        loss = self.model.loss_fn(self.model.loss_input(logits), batch[1])
         output = ClassificationModelOutput(
             logits=logits, probs=probs, preds=preds, uncertainty=uncertainty
         )

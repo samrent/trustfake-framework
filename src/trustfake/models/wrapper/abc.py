@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 import lightning as pl
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torchmetrics import Metric
 
 
@@ -82,6 +83,23 @@ class TrustFakeWrapper(ABC, pl.LightningModule):
         batch (see `trustfake.attacks.abc.AttackResult`).
         """
         return None
+
+    def loss_input(self, logits: Tensor) -> Tensor:
+        """What `self.loss_fn` should be fed, given raw logits.
+
+        Identity for a loss that consumes logits (cross-entropy). An
+        evidential head overrides it, because `EvidentialLoss` consumes
+        Dirichlet concentrations alpha = evidence(logits) + 1, not logits --
+        and it takes `log(alpha_y)`, so handing it a raw logit silently
+        returns NaN the moment any logit is negative, which is immediately.
+
+        This exists as a wrapper method rather than a branch in each training
+        pipe because the pipes should not have to know which loss they were
+        configured with. Getting it wrong does not raise: the loss is NaN, the
+        gradients are NaN, training runs to completion and reports a finished
+        model.
+        """
+        return logits
 
     def on_train_epoch_start(self) -> None:
         super().on_train_epoch_start()

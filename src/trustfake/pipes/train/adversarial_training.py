@@ -165,7 +165,7 @@ class PGDAdversarialTrainingModule(_AdversarialTrainingBase):
         self.apply_awp(x, x_adv, y)
 
         adv_logits = model_logits(self.model, x_adv)
-        loss = self.model.loss_fn(adv_logits, y)
+        loss = self.model.loss_fn(self.model.loss_input(adv_logits), y)
 
         return loss, self._metrics_output(x)
 

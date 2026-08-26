@@ -207,3 +207,51 @@ def test_every_arm_can_log_the_robust_selection_metric(cls, kwargs):
     module.validation_step(list(_batch()), 0)
 
     assert "val_robust_accuracy" in logged
+
+
+def test_evidential_loss_receives_alpha_not_logits():
+    """`EvidentialLoss` consumes Dirichlet concentrations, not logits, and it
+    takes log(alpha_y) -- so a raw logit makes the loss NaN as soon as any
+    logit is negative, which is immediately. Nothing raises: the loss is NaN,
+    the gradients are NaN, and training runs to completion reporting a
+    finished model. This is the ablation cell that isolates "evidential"
+    from "adversarially trained", so a silently-garbage arm here would make
+    EV-AT's contribution undecomposable."""
+    import torch.nn as nn
+
+    from trustfake.losses.evidential import EvidentialLoss
+    from trustfake.metrics.uncertainty.evidential import EvidentialPredictiveEntropy
+    from trustfake.models.wrapper import EvidentialWrapper
+
+    torch.manual_seed(0)
+    net = nn.Sequential(
+        nn.Conv2d(3, 8, 3, padding=1),
+        nn.ReLU(),
+        nn.Flatten(),
+        nn.Linear(8 * 8 * 8, NUM_CLASSES),
+    )
+    model = EvidentialWrapper(
+        normalization_layer=nn.Identity(),
+        model=net,
+        loss_fn=EvidentialLoss(num_classes=NUM_CLASSES),
+        uncertainty_score=EvidentialPredictiveEntropy(),
+    )
+    module = StandardTrainingModule(
+        model=model,
+        num_classes=NUM_CLASSES,
+        optimizer=torch.optim.Adam(model.parameters()),
+    )
+    module.train()
+    x, y = _batch(32)
+
+    loss, output = module.compute_loss([x, y])
+
+    assert torch.isfinite(loss), "evidential loss went NaN -- logits passed as alpha"
+    assert output.logits.min() < 0, "fixture must have a negative logit to be a test"
+
+
+def test_loss_input_is_identity_for_a_logit_consuming_loss():
+    """The seam must not disturb cross-entropy, which does take logits."""
+    model = _model()
+    logits = torch.randn(4, NUM_CLASSES)
+    assert torch.equal(model.loss_input(logits), logits)
