@@ -52,12 +52,25 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 SCORING_CONDITIONS = ("clean", "ace_uint8", "overconf")
 
 
+#: L_inf budgets, in units of 1/255. 8/255 is the field standard -- Madry's
+#: setting and RobustBench's headline column -- so it is the only number in
+#: this grid that makes a result comparable to everyone else's, which is what
+#: a BASELINE is for. It is included despite the forensic argument against it
+#: (a ball that wide erases the small-amplitude high-frequency evidence a
+#: deepfake detector reads, and wp1 recorded training collapsing onto a
+#: constant output there). That argument is a claim about this task, and a
+#: claim is worth testing rather than designing around: if 8/255 collapses,
+#: that is the finding that justifies the forensic regime to a reviewer who
+#: will otherwise ask why the standard budget is missing.
+EPS_LADDER = (1, 2, 4, 8)
+
+
 def grid_a(epochs: int) -> list[dict]:
     """Strategy A: the knobs of the arms that already exist."""
     cfgs: list[dict] = [
         {"name": "sw_std", "pipe": "standard", "adv_eps": 2 / 255},
     ]
-    for eps in (1, 2, 4):
+    for eps in EPS_LADDER:
         for steps in (3, 7):
             cfgs.append(
                 {
@@ -67,7 +80,7 @@ def grid_a(epochs: int) -> list[dict]:
                     "adv_steps": steps,
                 }
             )
-    for eps in (1, 2, 4):
+    for eps in EPS_LADDER:
         for beta in (3, 6):
             cfgs.append(
                 {
@@ -315,6 +328,13 @@ def main() -> None:
         "honest by refusing to classify is not a win",
     )
     ap.add_argument("--rank-only", action="store_true")
+    ap.add_argument(
+        "--only",
+        default=None,
+        help="comma-separated substrings; run only configurations whose name "
+        "matches one. Ranking still covers the whole grid, so a rung added "
+        "later is scored beside the rungs that already ran.",
+    )
     args = ap.parse_args()
 
     for var in ("OUTPUT_PATH", "LOGS_PATH", "DATA_PATH"):
@@ -323,7 +343,14 @@ def main() -> None:
 
     cfgs = build_grid(args.strategy, args.epochs)
     logs = pathlib.Path(os.environ["LOGS_PATH"]) / "sweep"
+    # Ranking always spans the FULL grid, even when --only narrows what runs:
+    # the point of adding a rung is to see it beside the others.
     names = [c["name"] for c in cfgs]
+    if args.only:
+        wanted = tuple(s.strip() for s in args.only.split(",") if s.strip())
+        cfgs = [c for c in cfgs if any(w in c["name"] for w in wanted)]
+        if not cfgs:
+            raise SystemExit(f"--only {args.only!r} matched no configuration")
 
     if not args.rank_only:
         print(
