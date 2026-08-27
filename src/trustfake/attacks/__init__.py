@@ -19,6 +19,7 @@ from .fgsm import FGSM
 from .param_ace import ParamACE
 from .pdpgd import PDPGD
 from .pgd import PGD, PGDL2
+from .query_confidence import QueryConfidence
 from .trust_region import TrustRegion
 from .uncertainty_fgsm import UncertaintyFGSM
 
@@ -35,6 +36,7 @@ __all__ = [
     "UncertaintyFGSM",
     "EvidenceTargetedPGD",
     "OverConfidence",
+    "QueryConfidence",
     "UnderConfidence",
     # prediction-targeted (native, fixed budget)
     "FGSM",

@@ -1,0 +1,11 @@
+# Gradient-free confidence attack (Square-style random search). The decisive
+# test of evidential confidence robustness: it never uses the model's
+# gradient, so gradient masking cannot inflate the result.
+attack:
+  _target_: trustfake.attacks.QueryConfidence
+  eps: 0.03137   # 8/255
+  n_queries: 400
+  direction: over
+  seed: 0
+  clip_min: 0.0
+  clip_max: 1.0
