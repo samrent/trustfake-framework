@@ -1,0 +1,1283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TrustFake — Attack Playground</title>
+<style>
+  :root{
+    --bg:#100f0b; --panel:#1a1813; --panel2:#211e17; --line:#332e24;
+    --ink:#f1ece0; --mut:#a99e8a; --dim:#776d58;
+    --control:#9a8f78; --label:#4f9d94; --confidence:#cf7f43; --evidential:#a488c9;
+    --uncertainty:#d7a53a; --evidence:#a488c9;
+    --ok:#7fae5a; --warn:#d7a53a; --bad:#d0614e; --review:#d7a53a;
+    --acc:#d7a53a; --acc2:#b7c56a;
+    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45}
+  body{background:
+    radial-gradient(1100px 460px at 88% -8%, rgba(215,165,58,.11), transparent 60%),
+    radial-gradient(820px 420px at 6% -6%, rgba(183,197,106,.055), transparent 55%),
+    var(--bg);
+    background-attachment:fixed;}
+  a{color:var(--acc)}
+  h1,h2,h3{margin:0;font-weight:650;letter-spacing:.2px}
+  .app{max-width:1500px;margin:0 auto;padding:18px 22px 80px}
+  header.top{display:flex;align-items:center;gap:18px;padding:16px 2px 18px;margin-bottom:6px}
+  .brand{display:flex;align-items:center;gap:11px;flex:none}
+  .brand .mark{width:23px;height:23px;color:var(--acc);flex:none}
+  .brand .wm{font-size:21px;font-weight:500;letter-spacing:.2px;color:var(--ink)}
+  .brand .wm-sub{font-size:12px;color:var(--mut);letter-spacing:.4px;font-weight:400;align-self:center}
+  header.top .rule{flex:1;height:1px;background:linear-gradient(90deg,var(--line),rgba(215,165,58,.18))}
+  .topmeta{display:flex;align-items:center;gap:22px;flex:none}
+  .topmeta > span{font-size:10.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--mut)}
+  .topmeta .demo-tag{font-family:var(--mono);color:var(--warn);border:1px solid rgba(215,165,58,.5);border-radius:20px;padding:4px 11px;letter-spacing:.6px;cursor:pointer;text-transform:none;font-size:10.5px}
+  .tagline{color:var(--mut);font-size:13px;letter-spacing:.2px;max-width:760px;margin:0 2px 20px;border-bottom:1px solid var(--line);padding-bottom:18px}
+
+  .grid{display:grid;grid-template-columns:230px 300px 1fr;gap:16px;align-items:start}
+  @media(max-width:1080px){.grid{grid-template-columns:1fr;}}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+  .card > .hd{padding:9px 12px;border-bottom:1px solid var(--line);font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--mut);display:flex;align-items:center;gap:8px}
+  .card > .bd{padding:12px}
+
+  /* ---- left rail : file drop + selector ---- */
+  #drop{border:1.5px dashed #38414f;border-radius:9px;padding:18px 10px;text-align:center;color:var(--mut);cursor:pointer;transition:.15s;background:#12161d}
+  #drop.hot{border-color:var(--acc);background:#141c28;color:var(--ink)}
+  #drop .big{font-size:26px;line-height:1;margin-bottom:6px}
+  #drop .hint{font-size:11.5px;margin-top:6px;color:var(--dim)}
+  .filelist{margin-top:10px;display:flex;flex-direction:column;gap:6px;max-height:340px;overflow:auto}
+  .fileitem{display:flex;gap:9px;align-items:center;padding:6px;border:1px solid var(--line);border-radius:8px;cursor:pointer;background:var(--panel2)}
+  .fileitem.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+  .fileitem canvas,.fileitem img{width:40px;height:40px;border-radius:5px;object-fit:cover;flex:none;background:#000;image-rendering:auto}
+  .fileitem .meta{min-width:0}
+  .fileitem .nm{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fileitem .dt{font-size:10.5px;color:var(--dim);font-family:var(--mono)}
+  .gt-badge{font-size:9.5px;font-family:var(--mono);padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+  .gt-real{color:var(--ok);border-color:#2c5a45}
+  .gt-synthetic{color:var(--confidence);border-color:#5a3a22}
+  .gt-tampered{color:var(--bad);border-color:#5a2e2b}
+  .gt-unknown{color:var(--dim)}
+  .railnote{font-size:11px;color:var(--dim);margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+
+  /* ---- controls column ---- */
+  .field{margin-bottom:14px}
+  .field > label{display:flex;justify-content:space-between;align-items:center;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--mut);margin-bottom:6px}
+  .field .info{cursor:pointer;color:var(--acc);font-size:11px;border:1px solid var(--acc);border-radius:50%;width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;line-height:1;text-transform:none;letter-spacing:0}
+  select,button,input{font-family:inherit;font-size:13px}
+  select{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 9px;appearance:none;cursor:pointer}
+  select:focus{outline:none;border-color:var(--acc)}
+  optgroup{color:var(--mut);font-style:normal}
+  option{color:var(--ink)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-family:var(--mono);font-size:12px;padding:6px 10px;border:1px solid var(--line);border-radius:20px;background:var(--panel2);color:var(--mut);cursor:pointer}
+  .chip.sel{border-color:var(--acc);color:var(--ink);background:#152131}
+  .taxo{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  .tag{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:5px;border:1px solid var(--line);color:var(--mut)}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+  .runbtn{width:100%;margin-top:4px;padding:12px;border-radius:9px;border:1px solid rgba(215,165,58,.55);background:linear-gradient(180deg,#dcac44,#c7942e);color:#1b1710;font-weight:650;letter-spacing:1px;cursor:pointer;text-transform:uppercase;font-size:12.5px}
+  .runbtn:hover{filter:brightness(1.05)}
+  .runbtn:disabled{opacity:.45;cursor:not-allowed;filter:none}
+  .modelmeta{font-size:11.5px;color:var(--mut);margin-top:8px;border-top:1px solid var(--line);padding-top:8px}
+  .modelmeta b{color:var(--ink);font-weight:600}
+
+  /* ---- stage ---- */
+  .stagewrap{min-height:200px}
+  .stage{display:grid;grid-template-columns:repeat(3,1fr) 1.15fr;gap:12px}
+  @media(max-width:1300px){.stage{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:680px){.stage{grid-template-columns:1fr}}
+  .pane{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px;display:flex;flex-direction:column}
+  .pane h3{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--mut);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+  .pane canvas{width:100%;aspect-ratio:1/1;border-radius:6px;background:#000;image-rendering:pixelated;border:1px solid #000}
+  .pane .cap{font-size:10.5px;color:var(--dim);font-family:var(--mono);margin-top:7px;line-height:1.5}
+  .empty{color:var(--dim);text-align:center;padding:50px 12px;border:1px dashed var(--line);border-radius:10px}
+  .empty .em{font-size:30px;margin-bottom:8px}
+
+  /* result pane */
+  .resbox{gap:6px}
+  .rrow{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0;border-bottom:1px solid #232a37}
+  .rrow:last-child{border-bottom:0}
+  .rrow .k{color:var(--mut)}
+  .rrow .v{font-family:var(--mono);text-align:right}
+  .verdict{display:inline-flex;gap:6px;align-items:center;font-family:var(--mono);font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid}
+  .v-allow{color:var(--ok);border-color:#2c5a45;background:#12211a}
+  .v-review{color:var(--review);border-color:#5a4a22;background:#221d12}
+  .v-flag{color:var(--bad);border-color:#5a2e2b;background:#221413}
+  .probrow{display:flex;align-items:center;gap:8px;font-size:11px;margin:3px 0}
+  .probrow .lab{width:74px;color:var(--mut);font-family:var(--mono);font-size:10.5px}
+  .bar{flex:1;height:9px;border-radius:5px;background:#0d1219;overflow:hidden;border:1px solid #232a37}
+  .bar > i{display:block;height:100%;border-radius:5px}
+  .probrow .pct{width:44px;text-align:right;font-family:var(--mono);font-size:10.5px;color:var(--mut)}
+  .arrow{color:var(--dim);font-family:var(--mono)}
+  .delta-up{color:var(--bad)} .delta-dn{color:var(--ok)} .delta-flat{color:var(--dim)}
+  .headline{font-size:12.5px;line-height:1.5;padding:9px 10px;border-radius:8px;margin-top:2px;border:1px solid}
+  .hl-crit{border-color:#5a2e2b;background:#1c1413;color:#f0b6b1}
+  .hl-warn{border-color:#5a4a22;background:#1c1913;color:#efd39a}
+  .hl-ok{border-color:#2c5a45;background:#12211a;color:#a9e3c8}
+
+  /* prediction chip */
+  .predchip{display:flex;align-items:center;gap:11px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#0d1219}
+  .predchip .pc-dot{width:11px;height:11px;border-radius:50%;flex:none;box-shadow:0 0 0 3px rgba(255,255,255,.04)}
+  .predchip .pc-main{min-width:0}
+  .predchip .pc-class{font-size:17px;font-weight:650;text-transform:capitalize;line-height:1.05}
+  .predchip .pc-sub{font-size:10.5px;color:var(--mut);font-family:var(--mono);margin-top:3px}
+  .predchip .pc-sub .flip{color:var(--bad)}
+  .predchip .pc-conf{margin-left:auto;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+  .predchip .pc-pct{font-family:var(--mono);font-size:17px;line-height:1}
+  .predchip .pc-gt{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:5px;border:1px solid var(--line);color:var(--mut)}
+  .predchip .pc-gt.ok{color:var(--ok);border-color:#2c5a45}
+  .predchip .pc-gt.bad{color:var(--bad);border-color:#5a2e2b}
+
+  /* stacked class-probability bar */
+  .stacked{display:flex;height:13px;border-radius:7px;overflow:hidden;border:1px solid #232a37;background:#0d1219;margin-top:2px}
+  .stacked > i{height:100%}
+  .stacked > i.pred{box-shadow:inset 0 0 0 2px rgba(255,255,255,.85)}
+  .slegend{display:flex;gap:14px;margin-top:7px;font-family:var(--mono);font-size:10.5px;color:var(--mut);flex-wrap:wrap}
+  .slg{display:inline-flex;align-items:center;gap:5px}
+  .slg .d{width:8px;height:8px;border-radius:2px;flex:none}
+  .slg b{color:var(--ink);font-weight:600}
+
+  /* threshold-aware meter (clean -> attacked movement) */
+  .mrow{margin-top:13px}
+  .mlabel{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--mut);margin-bottom:9px}
+  .mlabel .mval{font-family:var(--mono);color:var(--ink);font-size:11.5px}
+  .mlabel .mval .a{color:var(--dim)}
+  .mlabel .mval .b.up{color:var(--bad)} .mlabel .mval .b.dn{color:var(--ok)} .mlabel .mval .b.flat{color:var(--mut)}
+  .meter{position:relative;height:16px;margin-bottom:16px}
+  .meter .zones{display:flex;height:100%;border-radius:6px;overflow:hidden;border:1px solid #232a37}
+  .meter .zones > i{height:100%}
+  .meter .gate{position:absolute;top:-3px;bottom:-3px;width:0;border-left:2px dashed #8a93a3}
+  .meter .gatelab{position:absolute;bottom:-15px;font-family:var(--mono);font-size:9px;color:var(--mut);transform:translateX(-50%);white-space:nowrap}
+  .meter .zlab{position:absolute;bottom:-15px;font-family:var(--mono);font-size:9px;color:var(--dim);transform:translateX(-50%);white-space:nowrap}
+  .meter .conn{position:absolute;top:50%;height:2px;background:var(--mut);transform:translateY(-50%);opacity:.55;border-radius:2px}
+  .meter .mk{position:absolute;top:50%;transform:translate(-50%,-50%);width:12px;height:12px;border-radius:50%;box-shadow:0 0 0 2px #0d1219;z-index:2}
+  .meter .mk.clean{background:#0d1219;border:2px solid var(--mut)}
+  .meter .mk.att{border:2px solid #0d1219}
+  .meter.mini{height:10px;margin-bottom:4px}
+  .meter.mini .mk{width:9px;height:9px}
+
+  /* history / xml frames */
+  section.hist{margin-top:26px}
+  .histhd{display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:14px}
+  .histhd h2{font-size:15px}
+  .histhd .count{font-family:var(--mono);color:var(--dim);font-size:12px}
+  .histhd .sp{margin-left:auto;display:flex;gap:8px}
+  .minibtn{font-family:var(--mono);font-size:11.5px;padding:6px 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--mut);cursor:pointer}
+  .minibtn:hover,.minibtn:hover{color:var(--ink);border-color:var(--acc)}
+  .frame{border:1px solid var(--line);border-radius:10px;margin-bottom:14px;overflow:hidden;background:var(--panel)}
+  .frame .fhead{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#0c1017;border-bottom:1px solid var(--line);font-size:12.5px;flex-wrap:wrap;cursor:pointer}
+  .frame.collapsed .fhead{border-bottom:0}
+  .frame .fnum{font-family:var(--mono);color:var(--dim);font-size:11.5px;flex:none}
+  .frame .fsum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+  .frame .fsum .s{display:inline-flex;align-items:center;gap:6px;color:var(--ink);white-space:nowrap}
+  .frame .feps{font-family:var(--mono);color:var(--mut);font-size:11.5px}
+  .frame .subtag{font-family:var(--mono);font-size:10px;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+  .frame .fout{margin-left:auto;font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:6px;border:1px solid;white-space:nowrap}
+  .fout-crit{color:#f0b6b1;border-color:#5a2e2b;background:#1c1413}
+  .fout-warn{color:#efd39a;border-color:#5a4a22;background:#1c1913}
+  .fout-ok{color:#a9e3c8;border-color:#2c5a45;background:#12211a}
+  .frame .fbody{padding:12px;display:grid;grid-template-columns:110px 110px 110px 1fr;gap:12px;align-items:start}
+  @media(max-width:820px){.frame .fbody{grid-template-columns:1fr 1fr}}
+  .frame .fbody canvas{width:100%;aspect-ratio:1/1;border-radius:6px;image-rendering:pixelated;background:#000;border:1px solid #000}
+  .frame .minilab{font-size:10px;color:var(--dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}
+  .frame .fstats{font-size:11.5px}
+  .frame .fx{position:absolute;top:7px;right:9px;display:flex;gap:7px}
+  .frame .fx b{cursor:pointer;color:var(--dim);font-weight:400}
+  .frame .fx b:hover{color:var(--ink)}
+  .frame.collapsed .fbody{display:none}
+  .filterbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:var(--mut);margin-bottom:12px}
+  .filterbar select{width:auto;padding:5px 8px;font-size:12px}
+
+  /* modal overlay */
+  .overlay{position:fixed;inset:0;background:rgba(6,8,12,.72);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:50;padding:24px}
+  .overlay.on{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:720px;width:100%;max-height:86vh;overflow:auto;box-shadow:0 24px 70px rgba(0,0,0,.6)}
+  .modal .mh{position:sticky;top:0;background:var(--panel);border-bottom:1px solid var(--line);padding:16px 20px;display:flex;align-items:center;gap:12px}
+  .modal .mh .dot{width:12px;height:12px}
+  .modal .mh h2{font-size:16px}
+  .modal .mh .x{margin-left:auto;cursor:pointer;color:var(--mut);font-size:20px;line-height:1}
+  .modal .mb{padding:18px 20px}
+  .modal .cat{font-family:var(--mono);font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
+  .eqn{font-family:var(--mono);font-size:14px;background:#0c1017;border:1px solid var(--line);border-radius:9px;padding:14px 16px;margin:12px 0;color:#dfe8f2;overflow-x:auto;line-height:1.9}
+  .eqn .c{color:var(--dim)}
+  .eqn .hi{color:#c58a5b}
+  .modal p{color:var(--mut);margin:10px 0}
+  .modal p b,.modal li b{color:var(--ink);font-weight:600}
+  .modal ul{margin:8px 0;padding-left:18px;color:var(--mut)}
+  .modal li{margin:5px 0}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px;margin:12px 0}
+  .kv .k{color:var(--dim);font-family:var(--mono)}
+  .kv .v{color:var(--ink)}
+  .cite{font-size:11.5px;color:var(--dim);font-style:italic;border-top:1px solid var(--line);padding-top:10px;margin-top:14px}
+  .profile{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+  .prof{flex:1;min-width:120px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+  .prof .pt{font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.4px}
+  .prof .pv{font-family:var(--mono);font-size:16px;margin-top:3px}
+  .prof .pbar{height:5px;border-radius:3px;background:#0d1219;margin-top:6px;overflow:hidden}
+  .prof .pbar>i{display:block;height:100%}
+
+  .foot{margin-top:34px;border-top:1px solid var(--line);padding-top:14px;color:var(--dim);font-size:11.5px;line-height:1.6}
+  .foot code{font-family:var(--mono);color:var(--mut)}
+  .tip{position:fixed;z-index:60;max-width:260px;background:#0c1017;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:11.5px;color:var(--mut);box-shadow:0 8px 24px rgba(0,0,0,.5);pointer-events:none;display:none;line-height:1.5}
+  .tip b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <span class="brand">
+      <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <ellipse cx="12" cy="6.4" rx="8" ry="3.1"/>
+        <path d="M4 6.4v5c0 1.7 3.58 3.1 8 3.1s8-1.4 8-3.1v-5"/>
+        <path d="M4 11.4v5c0 1.7 3.58 3.1 8 3.1s8-1.4 8-3.1v-5"/>
+      </svg>
+      <span class="wm">TrustFake</span>
+      <span class="wm-sub">Attack Playground</span>
+    </span>
+    <span class="rule"></span>
+    <nav class="topmeta">
+      <span>SID-Set · 3-class</span>
+      <span>ε-bounded</span>
+      <span class="demo-tag" id="demoTag" title="what's real vs. simulated">DEMO · surrogate</span>
+    </nav>
+  </header>
+  <p class="tagline">Confidence and prediction attacks on a tampered-image detector — real / synthetic / tampered. Choose a training arm, an attack and a budget; watch the noise, the perturbed image, and where the prediction and its uncertainty move.</p>
+
+  <div class="grid">
+    <!-- ============ LEFT RAIL : file drop + selector ============ -->
+    <div class="card">
+      <div class="hd">Inputs</div>
+      <div class="bd">
+        <div id="drop">
+          <div class="big">⬆</div>
+          <div>Drop images here</div>
+          <div class="hint">or click to browse · PNG / JPG</div>
+        </div>
+        <input type="file" id="fileInput" accept="image/*" multiple hidden />
+        <div class="filelist" id="fileList"></div>
+        <div class="railnote">
+          Select a file to make it the active input. Set its <b>ground truth</b> so the
+          result box can show GT vs. predicted. Three synthetic samples are preloaded.
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ CONTROLS ============ -->
+    <div class="card">
+      <div class="hd">Configure run</div>
+      <div class="bd">
+        <div class="field">
+          <label>Model <span class="info" id="modelInfo" title="Explain the training mathematics">i</span></label>
+          <select id="modelSel"></select>
+          <div class="taxo" id="modelTax"></div>
+          <div class="modelmeta" id="modelMeta"></div>
+        </div>
+
+        <div class="field">
+          <label>Attack <span class="info" id="attackInfo" title="Explain this attack">i</span></label>
+          <select id="attackSel"></select>
+          <div class="taxo" id="attackTax"></div>
+        </div>
+
+        <div class="field">
+          <label><span id="epsLabel">Epsilon — L∞ budget</span></label>
+          <div class="chips" id="epsChips"></div>
+        </div>
+
+        <div class="field" id="gtField">
+          <label>Ground truth of active image</label>
+          <select id="gtSel">
+            <option value="unknown">unknown</option>
+            <option value="real">real</option>
+            <option value="synthetic">synthetic</option>
+            <option value="tampered">tampered</option>
+          </select>
+        </div>
+
+        <button class="runbtn" id="runBtn">RUN ATTACK ▸</button>
+      </div>
+    </div>
+
+    <!-- ============ STAGE ============ -->
+    <div class="card stagewrap">
+      <div class="hd">Latest generation <span id="stageId" style="margin-left:auto;font-family:var(--mono);color:var(--dim);text-transform:none;letter-spacing:0"></span></div>
+      <div class="bd">
+        <div id="stage">
+          <div class="empty"><div class="em">◇</div>Pick a model, an attack and an ε, then <b>RUN ATTACK</b>.<br/>The clean image, the noise δ, the perturbed x+δ and the statistics appear here.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ EXPERIMENTAL HISTORY ============ -->
+  <section class="hist">
+    <div class="histhd">
+      <h2>Experimental history</h2>
+      <span class="count" id="histCount">0 frames</span>
+      <div class="sp">
+        <span class="minibtn" id="expBtn">export .xml</span>
+        <span class="minibtn" id="clearBtn">clear</span>
+      </div>
+    </div>
+    <div class="filterbar">
+      <span>filter</span>
+      <select id="fModel"><option value="">all models</option></select>
+      <select id="fAttack"><option value="">all attacks</option></select>
+      <select id="fFam"><option value="">all families</option></select>
+      <span id="fShown" style="margin-left:auto;font-family:var(--mono);color:var(--dim)"></span>
+    </div>
+    <div id="history">
+      <div class="empty"><div class="em">⌗</div>No runs yet. Each generation is stored below as an XML frame you can scroll, filter and export.</div>
+    </div>
+  </section>
+
+  <div class="foot" id="foot"></div>
+</div>
+
+<div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+/* ============================================================================
+   TrustFake · Attack Playground  — self-contained, offline, no dependencies.
+
+   The perturbations are computed on the REAL pixels of the selected image
+   (genuine L-inf / L2 bounded noise). The class scores, uncertainty and
+   moderation verdict come from a DETERMINISTIC SURROGATE, not a trained
+   SID-Set checkpoint — the repo ships no weights. The surrogate is wired so
+   the qualitative behaviour matches the findings the harness exists to
+   measure: label-axis defences leave accuracy intact while a confidence
+   attack collapses selective risk; the evidential head masks gradients yet
+   folds to the gradient-free query attack. See README / src/trustfake.
+   ========================================================================== */
+
+const WORK = 160;              // working resolution for the surrogate (px)
+const EPS8 = 8/255;            // 0.03137 — the forensic reference budget
+
+/* ---- classes --------------------------------------------------------- */
+const CLASSES = ["real","synthetic","tampered"];     // SID-Set, real_class = 0
+const CLASS_COLOR = {real:"#7fae5a", synthetic:"#d99a3c", tampered:"#d0614e"};
+
+/* ---- moderation thresholds (illustrative; see metrics/moderation.py) -- */
+const T_LOW = 0.20, T_HIGH = 0.60, T_UNC = 0.55;
+
+/* ==========================================================================
+   MODELS — the training arms of the sweep. `objective` is the actual loss
+   minimised during training (from src/trustfake/pipes/train/*). The overlay
+   renders it as "the mathematics selected during training".
+   Robustness fields are 0..1 illustrative priors that steer the surrogate.
+   ========================================================================== */
+const MODELS = [
+  { id:"standard", name:"Standard (no defence)", cat:"control", color:"var(--control)",
+    wrapper:"Base (softmax)", head:"1 − max softmax", cite:"control arm — cross-entropy only",
+    clean:.93, labelRobust:.05, confRobustGrad:.05, confRobustQuery:.05, evidential:false,
+    defends:"nothing — the reference point every attack is measured against.",
+    objective:[
+      ["min<sub>θ</sub>  𝔼<sub>(x,y)</sub> [ CE( f<sub>θ</sub>(x), y ) ]",""],
+      ["", "// plain empirical-risk minimisation. No inner adversary, no confidence term."]
+    ]},
+
+  { id:"pgd_at", name:"PGD-AT", cat:"label axis", color:"var(--label)",
+    wrapper:"Base (softmax)", head:"1 − max softmax", cite:"Madry et al. 2018",
+    clean:.86, labelRobust:.75, confRobustGrad:.10, confRobustQuery:.10, evidential:false,
+    defends:"the LABEL axis — the worst-case flipped prediction inside the ε-ball.",
+    objective:[
+      ["min<sub>θ</sub>  𝔼  max<sub>‖δ‖<sub>∞</sub> ≤ ε</sub>  CE( f<sub>θ</sub>(x+δ), y )",""],
+      ["","// inner PGD-k finds the worst δ; train cross-entropy on that point."]
+    ]},
+
+  { id:"trades", name:"TRADES", cat:"label axis", color:"var(--label)",
+    wrapper:"Base (softmax)", head:"1 − max softmax", cite:"Zhang et al. 2019",
+    clean:.87, labelRobust:.72, confRobustGrad:.12, confRobustQuery:.12, evidential:false,
+    defends:"the LABEL axis — trades clean accuracy against a boundary-smoothness KL.",
+    objective:[
+      ["min<sub>θ</sub>  𝔼 [ CE( f<sub>θ</sub>(x), y )  +  β · KL( f<sub>θ</sub>(x) ‖ f<sub>θ</sub>(x+δ*) ) ]",""],
+      ["δ* = arg max<sub>δ</sub> KL( f<sub>θ</sub>(x) ‖ f<sub>θ</sub>(x+δ) )",""],
+      ["","// CE stays on the CLEAN forward; the KL is the only robustness pressure."]
+    ]},
+
+  { id:"at_kl", name:"AT+KL (hybrid)", cat:"label axis", color:"var(--label)",
+    wrapper:"Base (softmax)", head:"1 − max softmax", cite:"hybrid — not TRADES renamed",
+    clean:.85, labelRobust:.74, confRobustGrad:.15, confRobustQuery:.15, evidential:false,
+    defends:"the LABEL axis — genuine adversarial training PLUS a consistency KL.",
+    objective:[
+      ["min<sub>θ</sub>  𝔼 [ CE( f<sub>θ</sub>(<span class='hi'>x+δ*</span>), y )  +  β · KL( f<sub>θ</sub>(x) ‖ f<sub>θ</sub>(x+δ*) ) ]",""],
+      ["","// CE is on the ADVERSARIAL forward (that is the whole distinction from TRADES)."]
+    ]},
+
+  { id:"mart", name:"MART", cat:"label axis", color:"var(--label)",
+    wrapper:"Base (softmax)", head:"1 − max softmax", cite:"Wang et al. 2020",
+    clean:.85, labelRobust:.73, confRobustGrad:.13, confRobustQuery:.13, evidential:false,
+    defends:"the LABEL axis — margin-aware AT, up-weighting misclassified examples.",
+    objective:[
+      ["min<sub>θ</sub>  𝔼 [ BCE<sub>margin</sub>( f<sub>θ</sub>(x+δ*), y )  +  β · KL( f<sub>θ</sub>(x) ‖ f<sub>θ</sub>(x+δ*) ) · (1 − p<sub>y</sub>(x)) ]",""],
+      ["","// the (1 − p_y) factor concentrates the KL on the samples the model gets wrong."]
+    ]},
+
+  { id:"at_conf", name:"Confidence-AT", cat:"confidence axis", color:"var(--confidence)",
+    wrapper:"Base (softmax)", head:"1 − max softmax", cite:"Ledda et al. 2025 (inner attack)",
+    clean:.88, labelRobust:.30, confRobustGrad:.70, confRobustQuery:.55, evidential:false,
+    defends:"the CONFIDENCE axis — teaches the model it cannot be made confidently wrong.",
+    objective:[
+      ["ŷ = arg max<sub>c</sub> f<sub>θ</sub>(x)<sub>c</sub>          <span class='c'>// frozen clean prediction, label-free</span>",""],
+      ["δ* = arg min<sub>δ</sub> CE( f<sub>θ</sub>(x+δ), ŷ )   <span class='c'>// inner: inflate confidence in ŷ</span>",""],
+      ["min<sub>θ</sub>  𝔼 [ CE( f<sub>θ</sub>(x+δ*), <span class='hi'>y</span> ) ]     <span class='c'>// outer: demand that answer be RIGHT</span>",""]
+    ]},
+
+  { id:"conf_reg", name:"Confidence-Reg", cat:"confidence axis", color:"var(--confidence)",
+    wrapper:"Base (softmax)", head:"1 − max softmax", cite:"direct penalty, no adversary",
+    clean:.90, labelRobust:.10, confRobustGrad:.65, confRobustQuery:.60, evidential:false,
+    defends:"the CONFIDENCE axis directly — penalises confident mistakes, 1 forward/step.",
+    objective:[
+      ["min<sub>θ</sub>  𝔼 [ CE( f<sub>θ</sub>(x), y )  +  λ · 𝟙[ŷ≠y] · max softmax f<sub>θ</sub>(x) ]",""],
+      ["","// no inner attack — it optimises the failure-prediction property directly."]
+    ]},
+
+  { id:"evidential_adversarial", name:"EV-AT (evidential)", cat:"evidential", color:"var(--evidential)",
+    wrapper:"Evidential (Dirichlet)", head:"predictive entropy H[Cat(π̄)]", cite:"arXiv:2607.03075, Eq. 4",
+    clean:.87, labelRobust:.55, confRobustGrad:.85, confRobustQuery:.35, evidential:true,
+    defends:"both axes via an evidential head — but MASKS GRADIENTS (see the query attack).",
+    objective:[
+      ["e = softplus(z),   α = e + 1,   S = Σ<sub>c</sub> α<sub>c</sub>,   π̄ = α / S",""],
+      ["x<sub>adv</sub> = arg max<sub>x</sub> D( η, η<sub>adv</sub> )        <span class='c'>// evidence-targeted, η = log α</span>",""],
+      ["min<sub>θ</sub>  L<sub>EV</sub>(α, y)  +  β · L<sub>REA</sub>( η, η<sub>adv</sub> )     <span class='c'>// clean evidential + robust alignment</span>",""],
+      ["u(x) = H[ Cat(π̄) ]                     <span class='c'>// selective score = predictive entropy</span>",""]
+    ]},
+];
+
+/* ==========================================================================
+   ATTACKS — from src/trustfake/attacks. `effect` drives the surrogate:
+     flip  : prediction attack — shrinks the margin, may cross the boundary.
+     over  : confidence attack — drives uncertainty DOWN, argmax held fixed.
+     under : confidence attack — drives uncertainty UP,   argmax held fixed.
+     evidence : targets the evidential head (entropy), gradient-based.
+   ========================================================================== */
+const FAMCOL = { prediction:"var(--label)", confidence:"var(--confidence)",
+                 uncertainty:"var(--uncertainty)", evidence:"var(--evidence)" };
+const ATTACKS = [
+ // --- prediction, fixed budget, L-inf ---
+ {id:"fgsm", name:"FGSM", fam:"prediction", dir:"none", norm:"linf", minNorm:false, gradFree:false, labels:true, effect:"flip", strength:.55,
+   mech:"One signed gradient step of size ε. The classic single-shot L∞ attack; cheap, weakest of the family."},
+ {id:"bim", name:"BIM", fam:"prediction", dir:"none", norm:"linf", minNorm:false, gradFree:false, labels:true, effect:"flip", strength:.8,
+   mech:"Iterative FGSM (BIM/I-FGSM): k small signed steps, each re-projected into the ε-ball."},
+ {id:"pgd", name:"PGD", fam:"prediction", dir:"none", norm:"linf", minNorm:false, gradFree:false, labels:true, effect:"flip", strength:1.0,
+   mech:"Projected gradient descent with a random start — the standard strong first-order L∞ attack."},
+ {id:"pgd_l2", name:"PGD-L2", fam:"prediction", dir:"none", norm:"l2", minNorm:false, gradFree:false, labels:true, effect:"flip", strength:.95,
+   mech:"PGD in the L2 ball rather than L∞ — the budget is a Euclidean radius."},
+ {id:"trust_region", name:"TrustRegion", fam:"prediction", dir:"none", norm:"linf", minNorm:false, gradFree:false, labels:true, effect:"flip", strength:.9,
+   mech:"Second-order trust-region PGD variant; adapts the step to local curvature."},
+ {id:"a3", name:"AdaptiveAutoAttack (A³)", fam:"prediction", dir:"none", norm:"linf", minNorm:false, gradFree:false, labels:true, effect:"flip", strength:1.05,
+   mech:"Adaptive AutoAttack — online statistics-based discarding, budgeted by sample-iterations."},
+ {id:"apgd", name:"APGD (AutoAttack)", fam:"prediction", dir:"none", norm:"linf", minNorm:false, gradFree:false, labels:true, effect:"flip", strength:1.05,
+   mech:"Auto-PGD: momentum + adaptive step size + restarts. Component of AutoAttack."},
+ {id:"fab", name:"FAB (AutoAttack)", fam:"prediction", dir:"none", norm:"linf", minNorm:false, gradFree:false, labels:false, effect:"flip", strength:.9,
+   mech:"Fast Adaptive Boundary — walks toward the nearest decision boundary."},
+ {id:"square", name:"Square (AutoAttack)", fam:"prediction", dir:"none", norm:"linf", minNorm:false, gradFree:true, labels:false, effect:"flip", strength:.85,
+   mech:"Gradient-FREE random search with square-shaped updates. Immune to gradient masking."},
+ {id:"autoattack", name:"AutoAttack-L∞", fam:"prediction", dir:"none", norm:"linf", minNorm:false, gradFree:false, labels:true, effect:"flip", strength:1.1,
+   mech:"The full APGD-CE + APGD-DLR + FAB + Square ensemble — the robustness gold standard."},
+ // --- prediction, minimum-norm ---
+ {id:"deepfool", name:"DeepFool", fam:"prediction", dir:"none", norm:"l2", minNorm:true, gradFree:false, labels:false, effect:"flip", strength:.9,
+   mech:"Minimum-norm: linearises the boundary and steps just across it. ε is an L2 CAP, not the budget."},
+ {id:"cw", name:"Carlini–Wagner", fam:"prediction", dir:"none", norm:"l2", minNorm:true, gradFree:false, labels:true, effect:"flip", strength:1.0,
+   mech:"Minimum-norm L2 attack optimising a margin objective. The quantity minimised is the L2 norm."},
+ {id:"bb", name:"Brendel–Bethge", fam:"prediction", dir:"none", norm:"l2", minNorm:true, gradFree:false, labels:false, effect:"flip", strength:.95,
+   mech:"Decision-based minimum-norm: starts adversarial and walks along the boundary shrinking L2."},
+ {id:"pdpgd", name:"PDPGD", fam:"prediction", dir:"none", norm:"linf", minNorm:true, gradFree:false, labels:false, effect:"flip", strength:.9,
+   mech:"Primal-dual minimum-norm PGD. Here it minimises L∞, so effective_eps is the reported quantity."},
+ // --- confidence axis ---
+ {id:"ace", name:"ACE", fam:"confidence", dir:"both", norm:"linf", minNorm:false, gradFree:false, labels:false, effect:"over", strength:1.0,
+   mech:"Attack on Confidence Estimation. Accepts a δ only if the argmax is UNCHANGED — accuracy stays bit-identical while selective risk collapses."},
+ {id:"ace_uint8", name:"ACE (uint8, realisable)", fam:"confidence", dir:"both", norm:"linf", minNorm:false, gradFree:false, labels:false, effect:"over", strength:.85,
+   mech:"ACE whose steps snap to the 1/255 pixel grid — the perturbation survives being written to an 8-bit file."},
+ {id:"param_ace", name:"ParamACE", fam:"confidence", dir:"both", norm:"linf", minNorm:false, gradFree:false, labels:false, effect:"over", strength:.95,
+   mech:"Parameterised ACE — encodes an (η, ω) trade-off between how far confidence moves and how many samples move."},
+ {id:"overconf", name:"OverConfidence", fam:"confidence", dir:"over", norm:"linf", minNorm:false, gradFree:false, labels:false, effect:"over", strength:.95,
+   mech:"Inflates confidence in the model's own prediction — makes it sure of its mistakes. Argmax preserved."},
+ {id:"underconf", name:"UnderConfidence", fam:"confidence", dir:"under", norm:"linf", minNorm:false, gradFree:false, labels:false, effect:"under", strength:.95,
+   mech:"Deflates confidence — floods the human-review queue by making correct answers look uncertain."},
+ {id:"query_overconf", name:"QueryConfidence (over)", fam:"confidence", dir:"over", norm:"linf", minNorm:false, gradFree:true, labels:false, effect:"over", strength:.9,
+   mech:"GRADIENT-FREE random search that drives confidence up with forward passes only. The decisive test for gradient masking."},
+ {id:"query_underconf", name:"QueryConfidence (under)", fam:"confidence", dir:"under", norm:"linf", minNorm:false, gradFree:true, labels:false, effect:"under", strength:.9,
+   mech:"Gradient-free QueryConfidence driving confidence down. Survives an evidential head's gradient masking."},
+ // --- uncertainty / evidence ---
+ {id:"uncertainty_fgsm", name:"UncertaintyFGSM", fam:"uncertainty", dir:"none", norm:"linf", minNorm:false, gradFree:false, labels:false, effect:"under", strength:.9,
+   mech:"One signed step on the uncertainty score itself rather than the loss — moves the abstention signal directly."},
+ {id:"evidence_pgd", name:"EvidenceTargetedPGD", fam:"evidence", dir:"none", norm:"linf", minNorm:false, gradFree:false, labels:false, effect:"evidence", strength:1.0,
+   mech:"PGD in log-Dirichlet (log-α) space — attacks the evidence an evidential model reports. Same adversary EV-AT trains against."},
+];
+
+/* ---- epsilon presets, switched by the selected attack's norm ---------- */
+const EPS_LINF = [
+  {v:1/255,  label:"1/255",  note:"0.0039"},
+  {v:2/255,  label:"2/255",  note:"0.0078"},
+  {v:4/255,  label:"4/255",  note:"0.0157"},
+  {v:8/255,  label:"8/255",  note:"0.0314 · forensic"},
+  {v:16/255, label:"16/255", note:"0.0627 · erases residue"},
+];
+const EPS_L2 = [
+  {v:0.10, label:"0.10", note:"L2 cap"},
+  {v:0.25, label:"0.25", note:"L2 cap"},
+  {v:0.50, label:"0.50", note:"L2 cap"},
+  {v:1.00, label:"1.00", note:"L2 cap"},
+];
+
+/* ==========================================================================
+   State
+   ========================================================================== */
+let files = [];              // {id,name,gt,src(dataURL or null),img(Image),thumbCanvas}
+let activeId = null;
+let sel = { model:"standard", attack:"pgd", eps:EPS8 };
+let generations = [];        // history (also in localStorage)
+let genCounter = 0;
+const LS_KEY = "trustfake_playground_v1";
+
+/* ---- deterministic hashing / rng ------------------------------------- */
+function hashStr(s){ let h=2166136261>>>0; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619);} return h>>>0; }
+function mulberry32(a){ return function(){ a|=0;a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+
+/* ==========================================================================
+   Image feature extraction on the working canvas (grayscale statistics).
+   These stand in for the forensic cues a detector reads.
+   ========================================================================== */
+function extractFeatures(imgData, w, h){
+  const d = imgData.data;
+  let sum=0, sat=0, n=w*h;
+  const gray = new Float32Array(n);
+  for(let i=0,p=0;i<n;i++,p+=4){
+    const r=d[p]/255,g=d[p+1]/255,b=d[p+2]/255;
+    const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
+    const l=0.299*r+0.587*g+0.114*b;
+    gray[i]=l; sum+=l; sat += mx>0 ? (mx-mn)/mx : 0;
+  }
+  const mean=sum/n;
+  // high-frequency energy: mean |Laplacian| — the "deepfake residue" proxy
+  let hf=0, cnt=0, localMax=0;
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      const i=y*w+x;
+      const lap = 4*gray[i]-gray[i-1]-gray[i+1]-gray[i-w]-gray[i+w];
+      const a=Math.abs(lap); hf+=a; cnt++;
+      if(a>localMax) localMax=a;
+    }
+  }
+  hf/=cnt;
+  // horizontal symmetry (synthetic faces skew symmetric)
+  let sym=0, sc=0;
+  for(let y=0;y<h;y+=2){ for(let x=0;x<w/2;x+=2){ sym+=Math.abs(gray[y*w+x]-gray[y*w+(w-1-x)]); sc++; } }
+  sym = 1 - Math.min(1, (sym/sc)*2.2);  // 1 = perfectly symmetric
+  return { mean, sat:sat/n, hf:Math.min(1,hf*7), sym, localMax:Math.min(1,localMax*3) };
+}
+
+/* ==========================================================================
+   Surrogate forward pass.
+   Produces {logits[3], probs[3], pred, unc} for a model arm, from image
+   features + a per-image seed. Deterministic. `perturbFactor` (0..~2) nudges
+   the logits toward a flip for prediction attacks.
+   ========================================================================== */
+function surrogateForward(model, feats, seed, opts={}){
+  const rnd = mulberry32(seed);
+  const jitter = ()=> (rnd()-0.5)*0.35;
+  // base evidence for each class from forensic cues
+  const residue = feats.hf;          // high-freq residue -> generated/tampered
+  const local   = feats.localMax;    // strong local seam -> tampered splice
+  const sym     = feats.sym;         // symmetry -> synthetic
+  let zReal   = 1.7*(1-residue) + 0.6*(1-sym) - 0.8*local + jitter();
+  let zSynth  = 1.5*residue + 1.3*sym - 0.4*local + jitter();
+  let zTamper = 1.4*residue + 1.8*local + 0.2*(1-sym) + jitter();
+  let z = [zReal, zSynth, zTamper];
+
+  // prediction-flip nudge: shrink the winning margin toward the runner-up
+  if(opts.flip){
+    const order = [0,1,2].sort((a,b)=>z[b]-z[a]);
+    const top=order[0], run=order[1];
+    const margin = z[top]-z[run];
+    const push = opts.flip * (margin + 0.15);   // enough to cross when flip>=~1
+    z[top]-=push*0.7; z[run]+=push*0.7;
+  }
+
+  // temperature per arm (evidential head sharper on clean, softer under stress)
+  const T = model.evidential ? 1.15 : 1.0;
+  const probs = softmax(z, T);
+  const pred = argmax(probs);
+
+  // uncertainty score
+  let unc;
+  if(model.evidential){
+    unc = entropy3(probs)/Math.log(3);                 // predictive entropy, normalised
+  } else {
+    unc = 1 - Math.max(...probs);                      // 1 - max softmax
+  }
+  // confidence attacks overwrite unc via opts
+  if(opts.forceUnc!=null) unc = clamp01(opts.forceUnc);
+  return { z, probs, pred, unc };
+}
+function softmax(z,T=1){ const m=Math.max(...z); const e=z.map(v=>Math.exp((v-m)/T)); const s=e.reduce((a,b)=>a+b,0); return e.map(v=>v/s); }
+function argmax(a){ let mi=0; for(let i=1;i<a.length;i++) if(a[i]>a[mi]) mi=i; return mi; }
+function entropy3(p){ let h=0; for(const v of p) if(v>1e-9) h-=v*Math.log(v); return h; }
+function clamp01(x){ return Math.max(0,Math.min(1,x)); }
+
+/* ==========================================================================
+   Run one generation: perturb pixels + run surrogate clean & attacked.
+   ========================================================================== */
+function runGeneration(){
+  const f = files.find(x=>x.id===activeId);
+  if(!f || !f.img){ return; }
+  const model = MODELS.find(m=>m.id===sel.model);
+  const atk = ATTACKS.find(a=>a.id===sel.attack);
+  const eps = sel.eps;
+
+  // draw active image into working canvas
+  const wc = document.createElement("canvas"); wc.width=WORK; wc.height=WORK;
+  const wx = wc.getContext("2d", {willReadFrequently:true});
+  wx.drawImage(f.img, 0,0, WORK, WORK);
+  const clean = wx.getImageData(0,0,WORK,WORK);
+  const seed = hashStr(f.name+"|"+f.gt) >>> 0;
+  const feats = extractFeatures(clean, WORK, WORK);
+
+  // --- clean forward ---
+  const cleanOut = surrogateForward(model, feats, seed);
+
+  // --- build perturbation delta on the real pixels ---
+  const {delta, effEps, l2, success} = buildPerturbation(clean, WORK, atk, eps, seed);
+
+  // --- perturbed image ---
+  const perturbed = new ImageData(WORK,WORK);
+  for(let i=0;i<clean.data.length;i++){
+    if(i%4===3){ perturbed.data[i]=255; continue; }
+    perturbed.data[i] = clamp255(clean.data[i] + delta[i]*255);
+  }
+
+  // --- attacked forward: effect depends on family ---
+  const epsFrac = Math.min(2.0, (atk.norm==="l2") ? eps/0.5 : eps/EPS8);
+  let attackedOut, argmaxPreserved, narrative, headlineClass;
+
+  if(atk.effect==="flip"){
+    // prediction attack: nudge logits; robustness of a LABEL-axis arm resists
+    const room = 1 - model.labelRobust;
+    const flip = (atk.minNorm ? 1.05 : atk.strength) * epsFrac * room * 1.6;
+    attackedOut = surrogateForward(model, feats, seed, {flip});
+    argmaxPreserved = attackedOut.pred===cleanOut.pred;
+    if(!argmaxPreserved){
+      narrative = `Prediction FLIPPED: ${CLASSES[cleanOut.pred]} → ${CLASSES[attackedOut.pred]}. An accuracy monitor sees this attack immediately.`;
+      headlineClass="hl-crit";
+    } else {
+      narrative = `Prediction held (${CLASSES[cleanOut.pred]}). This ${model.name} arm absorbed the label-axis attack at ε=${fmtEps(eps,atk)}.`;
+      headlineClass = model.labelRobust>0.5 ? "hl-ok":"hl-warn";
+    }
+  } else {
+    // confidence / uncertainty / evidence attack: argmax preserved by construction
+    const robust = atk.gradFree ? model.confRobustQuery : model.confRobustGrad;
+    // evidence attack is strong specifically vs the evidential head
+    let room = 1 - robust;
+    if(atk.effect==="evidence") room = model.evidential ? (1-model.confRobustGrad)*1.15 : 0.25;
+    const move = Math.min(0.95, atk.strength * epsFrac * room);
+
+    let forceUnc;
+    if(atk.effect==="over"){ forceUnc = cleanOut.unc*(1-move); }             // confidence up
+    else { forceUnc = cleanOut.unc + (1-cleanOut.unc)*move; }                // confidence down (under / uncertainty / evidence-as-entropy)
+
+    attackedOut = surrogateForward(model, feats, seed, {forceUnc});
+    attackedOut.pred = cleanOut.pred;                                        // held fixed
+    attackedOut.probs = cleanOut.probs.slice();                             // p unchanged for display; only the reported unc moves
+    argmaxPreserved = true;
+
+    // moderation consequence
+    const cA = moderate(cleanOut), aA = moderate(attackedOut);
+    if(atk.effect==="over"){
+      const dropped = cleanOut.unc - forceUnc;
+      const gradMask = model.evidential && (model.confRobustGrad - model.confRobustQuery) > 0.25;
+      if(!atk.gradFree && gradMask && robust>0.6){
+        narrative = `Gradient confidence attack STALLED on the evidential head (uncertainty moved only ${(Math.abs(dropped)*100).toFixed(0)}%). Looks robust — now run the gradient-free QueryConfidence on this same arm.`;
+        headlineClass="hl-warn";
+      } else if(atk.gradFree && gradMask){
+        narrative = `Gradient-free query attack drove uncertainty ${(dropped*100).toFixed(0)}% lower where the gradient attack stalled — the evidential "robustness" was gradient masking.`;
+        headlineClass="hl-crit";
+      } else if(robust>0.5){
+        narrative = `Confidence defence held: uncertainty moved only ${(Math.abs(dropped)*100).toFixed(0)}%. This arm is aimed at exactly this attack.`;
+        headlineClass="hl-ok";
+      } else {
+        narrative = `Selective risk COLLAPSED: accuracy is bit-identical (still ${CLASSES[cleanOut.pred]}) but the model is now confidently wrong-capable. An accuracy monitor reports a healthy system.`;
+        headlineClass="hl-crit";
+      }
+    } else {
+      narrative = `Uncertainty inflated ${((forceUnc-cleanOut.unc)*100).toFixed(0)}% with the prediction unchanged — the human-review queue floods while accuracy looks fine.`;
+      headlineClass = robust>0.5 ? "hl-ok" : "hl-warn";
+    }
+  }
+
+  const cleanMod = moderate(cleanOut), attMod = moderate(attackedOut);
+
+  // build record
+  genCounter++;
+  const gen = {
+    n: genCounter,
+    ts: Date.now(),
+    file: f.name, gt: f.gt,
+    modelId: model.id, modelName: model.name, modelCat: model.cat,
+    attackId: atk.id, attackName: atk.name, fam: atk.fam, dir: atk.dir,
+    gradFree: atk.gradFree, norm: atk.norm, minNorm: atk.minNorm,
+    eps, effEps, l2, success,
+    clean: pack(cleanOut, cleanMod),
+    att: pack(attackedOut, attMod),
+    argmaxPreserved, narrative, headlineClass,
+    thumbs: makeThumbs(clean, delta, perturbed),
+  };
+  generations.unshift(gen);
+  saveHistory();
+  renderStage(gen);
+  renderHistory();
+  updateFilters();
+  const st=document.getElementById("stageId"); st.textContent="#"+String(gen.n).padStart(3,"0");
+}
+
+function pack(out, mod){ return { probs:out.probs.map(x=>+x.toFixed(4)), pred:out.pred, unc:+out.unc.toFixed(4), pfake:+pFake(out.probs).toFixed(4), action:mod }; }
+function pFake(probs){ return 1 - probs[0]; }          // real_class = 0
+function moderate(out){
+  const pf = pFake(out.probs);
+  if(out.unc > T_UNC) return "REVIEW";                 // uncertainty gate
+  if(pf < T_LOW) return "ALLOW";
+  if(pf > T_HIGH) return "FLAG";
+  return "REVIEW";
+}
+function clamp255(v){ return v<0?0:v>255?255:v|0; }
+function fmtEps(e,atk){ if(atk && atk.norm==="l2") return "L2≤"+e.toFixed(2); const k=Math.round(e*255); return (Math.abs(e*255-k)<0.01? k+"/255" : e.toFixed(4)); }
+
+/* ---- perturbation builders ------------------------------------------- */
+function buildPerturbation(clean, w, atk, eps, seed){
+  const n = w*w;
+  const delta = new Float32Array(n*4);   // per-channel signed noise in image units [-1,1]
+  const rnd = mulberry32(seed ^ hashStr(atk.id));
+  const data = clean.data;
+
+  // structured high-frequency sign field (adversarial noise looks like this)
+  const isConf = (atk.fam==="confidence"||atk.fam==="uncertainty"||atk.fam==="evidence");
+  const amp = eps;                        // L-inf magnitude cap
+  let sumSq = 0;
+
+  for(let y=0;y<w;y++){
+    for(let x=0;x<w;x++){
+      const i=(y*w+x);
+      // local gradient of luminance -> attacks concentrate on edges/texture
+      const gx = lum(data,i+1,n) - lum(data,i-1,n);
+      const gy = lum(data,i+w,n) - lum(data,i-w,n);
+      const gmag = Math.min(1, Math.hypot(gx,gy)*3);
+      for(let c=0;c<3;c++){
+        let s;
+        if(atk.gradFree){
+          // random-search: sparse square-ish blocks flipped ±amp
+          const bx=(x>>3), by=(y>>3);
+          s = (mulberry32(seed ^ (bx*73856093) ^ (by*19349663) ^ (c*83492791))() > 0.5 ? 1 : -1);
+          s *= (rnd()>0.35?1:0.15);
+        } else {
+          // signed "gradient" field, high-frequency, edge-weighted
+          const carrier = Math.sin(x*0.9+c)*Math.cos(y*0.9-c) + (rnd()-0.5)*1.4;
+          s = Math.sign(carrier);
+        }
+        let mag = amp;
+        if(isConf) mag = amp*(0.35+0.5*gmag);      // confidence noise is subtler, edge-hugging
+        else       mag = amp*(0.6+0.4*gmag);
+        if(atk.minNorm) mag *= 0.5;                 // minimum-norm attacks use less than the cap
+        // uint8-realisable ACE snaps to the 1/255 grid
+        if(atk.id==="ace_uint8") mag = Math.round(mag*255)/255;
+        const val = s*mag;
+        delta[i*4+c] = val;
+        sumSq += val*val;
+      }
+    }
+  }
+  // effective L-inf and L2 (over the whole image, image units)
+  let mx=0; for(let k=0;k<delta.length;k++){ if(k%4===3)continue; const a=Math.abs(delta[k]); if(a>mx)mx=a; }
+  const l2 = Math.sqrt(sumSq);
+  // minimum-norm attacks report success separately (surrogate: succeed most of the time)
+  const success = atk.minNorm ? (mulberry32(seed^hashStr(atk.id+"succ"))() > 0.15) : null;
+  return { delta, effEps:mx, l2, success };
+}
+function lum(data,i,n){ if(i<0)i=0; if(i>=n)i=n-1; const p=i*4; return (0.299*data[p]+0.587*data[p+1]+0.114*data[p+2])/255; }
+
+/* ---- thumbnails: clean, noise(amplified), perturbed ------------------ */
+function makeThumbs(clean, delta, perturbed){
+  const size=WORK;
+  const mk=(draw)=>{ const c=document.createElement("canvas"); c.width=size;c.height=size; draw(c.getContext("2d")); return c.toDataURL("image/png"); };
+  const cleanURL = mk(ctx=>ctx.putImageData(clean,0,0));
+  const pertURL  = mk(ctx=>ctx.putImageData(perturbed,0,0));
+  // amplify noise for visibility: find max abs, scale to fill ±0.5 around gray
+  let mx=1e-6; for(let k=0;k<delta.length;k++){ if(k%4===3)continue; const a=Math.abs(delta[k]); if(a>mx)mx=a; }
+  const gain = 0.5/mx;
+  const noiseImg = new ImageData(size,size);
+  for(let i=0;i<delta.length;i+=4){
+    for(let c=0;c<3;c++) noiseImg.data[i+c] = clamp255(128 + delta[i+c]*gain*255);
+    noiseImg.data[i+3]=255;
+  }
+  const noiseURL = mk(ctx=>ctx.putImageData(noiseImg,0,0));
+  return { clean:cleanURL, noise:noiseURL, pert:pertURL, gain:Math.round(gain) };
+}
+
+/* ==========================================================================
+   RENDERING
+   ========================================================================== */
+function el(tag, cls, html){ const e=document.createElement(tag); if(cls)e.className=cls; if(html!=null)e.innerHTML=html; return e; }
+
+function renderStage(g){
+  const stage=document.getElementById("stage");
+  stage.className="stage";
+  stage.innerHTML="";
+  stage.appendChild(panel("Clean input · x", g.thumbs.clean, `GT: ${g.gt}`));
+  stage.appendChild(panel("Noise · δ", g.thumbs.noise, `L∞ = ${fmtNum(g.effEps)}  ·  ×${g.thumbs.gain} gain\nL2 = ${fmtNum(g.l2)}`));
+  stage.appendChild(panel("Perturbed · x+δ", g.thumbs.pert, `${g.attackName}\nε = ${fmtEps(g.eps, ATTACKS.find(a=>a.id===g.attackId))}`));
+  stage.appendChild(resultPane(g));
+}
+function panel(title, url, cap){
+  const p=el("div","pane");
+  p.appendChild(el("h3",null,title));
+  const im=document.createElement("img"); im.src=url; im.style.width="100%"; im.style.aspectRatio="1/1"; im.style.borderRadius="6px"; im.style.imageRendering="pixelated"; im.style.border="1px solid #000"; im.style.background="#000";
+  p.appendChild(im);
+  p.appendChild(el("div","cap",escapeHtml(cap)));
+  return p;
+}
+/* ---- elegant, reusable result components --------------------------- */
+const Z_ALLOW="rgba(127,174,90,.30)", Z_REVIEW="rgba(215,165,58,.30)", Z_FLAG="rgba(208,97,78,.30)";
+const Z_AUTO ="rgba(127,174,90,.15)", Z_GATE  ="rgba(215,165,58,.26)";
+function actionColor(a){ return a==="ALLOW"?"var(--ok)":a==="FLAG"?"var(--bad)":"var(--warn)"; }
+function pfakeCol(d){ return Math.abs(d)<0.005?"var(--mut)":(d>0?"var(--bad)":"var(--ok)"); }   // rising = toward fake = red
+function uncCol(d){  return Math.abs(d)<0.005?"var(--mut)":(d<0?"var(--bad)":"var(--warn)"); }   // dropping = confidently wrong = red
+
+function predChip(g){
+  const cls=CLASSES[g.att.pred], col=CLASS_COLOR[cls], conf=Math.max(...g.att.probs);
+  const chip=el("div","predchip");
+  const gt = g.gt!=="unknown"
+    ? (()=>{ const ok=cls===g.gt; return `<span class="pc-gt ${ok?'ok':'bad'}">GT ${g.gt} ${ok?'✓':'✗'}</span>`; })()
+    : `<span class="pc-gt">GT unknown</span>`;
+  const sub = g.argmaxPreserved
+    ? `argmax held · ${escapeHtml(g.attackName)}`
+    : `<span class="flip">flipped from ${CLASSES[g.clean.pred]}</span> · ${escapeHtml(g.attackName)}`;
+  chip.innerHTML=`
+    <span class="pc-dot" style="background:${col}"></span>
+    <div class="pc-main"><div class="pc-class" style="color:${col}">${cls}</div><div class="pc-sub">${sub}</div></div>
+    <div class="pc-conf"><span class="pc-pct" style="color:${col}">${(conf*100).toFixed(0)}%</span>${gt}</div>`;
+  return chip;
+}
+function stackedProb(probs, predIdx){
+  const wrap=el("div");
+  const bar=el("div","stacked");
+  CLASSES.forEach((cn,ci)=>{ const i=document.createElement("i"); i.style.width=(probs[ci]*100)+"%"; i.style.background=CLASS_COLOR[cn]; if(ci===predIdx)i.className="pred"; bar.appendChild(i); });
+  wrap.appendChild(bar);
+  const lg=el("div","slegend");
+  CLASSES.forEach((cn,ci)=> lg.appendChild(el("span","slg",`<span class="d" style="background:${CLASS_COLOR[cn]}"></span>${cn} <b>${(probs[ci]*100).toFixed(0)}%</b>`)) );
+  wrap.appendChild(lg);
+  return wrap;
+}
+// a value-track showing the clean marker, the attacked marker and their movement,
+// over threshold zones (optionally with a dashed decision gate).
+function meterEl(a,b,zones,marks,opts={}){
+  const wrap=el("div","meter"+(opts.mini?" mini":""));
+  const z=el("div","zones"); let prev=0;
+  zones.forEach(s=>{ const i=document.createElement("i"); i.style.width=((s.to-prev)*100)+"%"; i.style.background=s.color; z.appendChild(i); prev=s.to; });
+  wrap.appendChild(z);
+  if(marks&&marks.gate){ const g=el("div","gate"); g.style.left=(marks.gate.at*100)+"%"; wrap.appendChild(g);
+    if(!opts.mini&&marks.gate.label){ const gl=el("div","gatelab",marks.gate.label); gl.style.left=(marks.gate.at*100)+"%"; wrap.appendChild(gl);} }
+  if(marks&&marks.zoneLabels&&!opts.mini){ marks.zoneLabels.forEach(zl=>{ const e=el("div","zlab",zl.label); e.style.left=(zl.at*100)+"%"; wrap.appendChild(e); }); }
+  const lo=Math.min(a,b),hi=Math.max(a,b);
+  if(hi-lo>0.004){ const c=el("div","conn"); c.style.left=(lo*100)+"%"; c.style.width=((hi-lo)*100)+"%"; wrap.appendChild(c); }
+  const mc=el("div","mk clean"); mc.style.left=(clamp01(a)*100)+"%"; wrap.appendChild(mc);
+  const ma=el("div","mk att"); ma.style.left=(clamp01(b)*100)+"%"; ma.style.background=opts.attColor||"var(--mut)"; wrap.appendChild(ma);
+  return wrap;
+}
+function meterRow(title, a, b, valCol, zones, marks, opts){
+  const row=el("div","mrow");
+  row.appendChild(el("div","mlabel",
+    `<span>${title}</span><span class="mval"><span class="a">${a.toFixed(2)}</span> → <span style="color:${valCol}">${b.toFixed(2)}</span></span>`));
+  row.appendChild(meterEl(a,b,zones,marks,opts));
+  return row;
+}
+
+function resultPane(g){
+  const model=MODELS.find(m=>m.id===g.modelId);
+  const p=el("div","pane resbox");
+  p.appendChild(el("h3",null,`Result <span class="verdict ${verdictCls(g.att.action)}">${g.att.action}</span>`));
+  p.appendChild(predChip(g));
+  const dist=el("div"); dist.style.marginTop="12px";
+  dist.appendChild(el("div","mlabel",`<span>Class distribution</span><span class="mval" style="color:var(--dim)">${model.evidential?"Dirichlet mean π̄":"softmax"}</span>`));
+  dist.appendChild(stackedProb(g.att.probs, g.att.pred));
+  p.appendChild(dist);
+  const dP=g.att.pfake-g.clean.pfake, dU=g.att.unc-g.clean.unc;
+  p.appendChild(meterRow("p(fake) → moderation", g.clean.pfake, g.att.pfake, pfakeCol(dP),
+    [{to:T_LOW,color:Z_ALLOW},{to:T_HIGH,color:Z_REVIEW},{to:1,color:Z_FLAG}],
+    {zoneLabels:[{at:T_LOW/2,label:"allow"},{at:(T_LOW+T_HIGH)/2,label:"review"},{at:(T_HIGH+1)/2,label:"flag"}]},
+    {attColor:actionColor(g.att.action)}));
+  p.appendChild(meterRow(model.evidential?"uncertainty · predictive entropy":"uncertainty · 1 − max softmax",
+    g.clean.unc, g.att.unc, uncCol(dU),
+    [{to:T_UNC,color:Z_AUTO},{to:1,color:Z_GATE}],
+    {gate:{at:T_UNC,label:"review gate"}}, {attColor:uncCol(dU)}));
+  p.appendChild(el("div",`headline ${g.headlineClass}`, escapeHtml(g.narrative)));
+  if(g.minNorm) p.appendChild(el("div","cap",`attack success: ${g.success?"yes":"no (returned clean, norm=0)"}`));
+  return p;
+}
+function rrow(k,v){ const r=el("div","rrow"); r.innerHTML=`<span class="k">${k}</span><span class="v">${v}</span>`; return r; }
+function verdictCls(a){ return a==="ALLOW"?"v-allow":a==="FLAG"?"v-flag":"v-review"; }
+function arrowSpan(a,b,unc){
+  const d=b-a;
+  if(Math.abs(d)<0.004) return `<span class="arrow">→ ${b.toFixed(3)}</span>`;
+  // For uncertainty, a DROP (confidently wrong) is the dangerous direction (red);
+  // for p(fake), a RISE toward "fake" is the notable one. Red = worse.
+  const cls = unc ? (d<0?"delta-up":"delta-dn") : (d>0?"delta-up":"delta-dn");
+  return `<span class="arrow">→</span> <span class="${cls}">${b.toFixed(3)} (${d>0?"+":""}${d.toFixed(3)})</span>`;
+}
+function fmtNum(x){ return x>=0.01? x.toFixed(4) : x.toExponential(2); }
+
+/* ---- history / xml frames -------------------------------------------- */
+function renderHistory(){
+  const host=document.getElementById("history");
+  const fM=document.getElementById("fModel").value, fA=document.getElementById("fAttack").value, fF=document.getElementById("fFam").value;
+  const shown=generations.filter(g=> (!fM||g.modelId===fM)&&(!fA||g.attackId===fA)&&(!fF||g.fam===fF));
+  document.getElementById("histCount").textContent=`${generations.length} frame${generations.length===1?"":"s"}`;
+  document.getElementById("fShown").textContent = shown.length!==generations.length ? `${shown.length} shown` : "";
+  if(!generations.length){ host.innerHTML=`<div class="empty"><div class="em">⌗</div>No runs yet. Each generation is stored below as an XML frame you can scroll, filter and export.</div>`; return; }
+  host.innerHTML="";
+  shown.forEach(g=> host.appendChild(frameEl(g)));
+}
+function xmlOf(g, indent=false){
+  const atk=ATTACKS.find(a=>a.id===g.attackId);
+  const pad=indent?"  ":"";
+  const t=new Date(g.ts).toISOString();
+  return (
+`<generation id="${String(g.n).padStart(3,"0")}" timestamp="${t}">
+${pad}<input file="${escapeAttr(g.file)}" ground_truth="${g.gt}"/>
+${pad}<model id="${g.modelId}" name="${escapeAttr(g.modelName)}" axis="${g.modelCat}"/>
+${pad}<attack id="${g.attackId}" name="${escapeAttr(g.attackName)}" family="${g.fam}" direction="${g.dir}" gradient_free="${g.gradFree}" norm="${g.norm}" min_norm="${g.minNorm}"/>
+${pad}<budget eps="${g.eps.toFixed(5)}" effective_linf="${g.effEps.toFixed(5)}" l2="${g.l2.toFixed(4)}"${g.success!=null?` success="${g.success}"`:""}/>
+${pad}<clean pred="${CLASSES[g.clean.pred]}" p_fake="${g.clean.pfake.toFixed(4)}" uncertainty="${g.clean.unc.toFixed(4)}" action="${g.clean.action}"/>
+${pad}<attacked pred="${CLASSES[g.att.pred]}" p_fake="${g.att.pfake.toFixed(4)}" uncertainty="${g.att.unc.toFixed(4)}" action="${g.att.action}" argmax_preserved="${g.argmaxPreserved}"/>
+${pad}<verdict>${escapeAttr(g.narrative)}</verdict>
+</generation>`);
+}
+function frameOutcome(g){
+  const cls = g.headlineClass==="hl-crit"?"fout-crit":g.headlineClass==="hl-warn"?"fout-warn":"fout-ok";
+  const txt = !g.argmaxPreserved ? `${CLASSES[g.clean.pred]} → ${CLASSES[g.att.pred]}`
+                                 : `held · u ${g.clean.unc.toFixed(2)}→${g.att.unc.toFixed(2)}`;
+  return {cls,txt};
+}
+function frameEl(g){
+  const fr=el("div","frame");
+  const m=MODELS.find(x=>x.id===g.modelId), o=frameOutcome(g);
+  const subtags=(g.gradFree?`<span class="subtag">gradient-free</span>`:"")+(g.minNorm?`<span class="subtag">min-norm</span>`:"");
+  const head=el("div","fhead");
+  head.innerHTML=
+    `<span class="fnum">#${String(g.n).padStart(3,"0")}</span>`+
+    `<span class="fsum">`+
+      `<span class="s"><span class="dot" style="background:${m.color}"></span>${escapeHtml(g.modelName)}</span>`+
+      `<span class="s"><span class="dot" style="background:${FAMCOL[g.fam]}"></span>${escapeHtml(g.attackName)}</span>`+
+      subtags+
+      `<span class="feps">${fmtEps(g.eps,ATTACKS.find(a=>a.id===g.attackId))}</span>`+
+    `</span>`+
+    `<span class="fout ${o.cls}">${escapeHtml(o.txt)}</span>`+
+    `<span class="fx"><b data-act="copy" title="copy XML">copy</b><b data-act="toggle" title="collapse">–</b><b data-act="del" title="delete">✕</b></span>`;
+  const toggle=()=>{ fr.classList.toggle("collapsed"); head.querySelector('[data-act="toggle"]').textContent=fr.classList.contains("collapsed")?"+":"–"; };
+  head.onclick=(e)=>{ if(!e.target.closest(".fx")) toggle(); };
+  head.querySelector('[data-act="copy"]').onclick=(e)=>{ e.stopPropagation(); navigator.clipboard&&navigator.clipboard.writeText(xmlOf(g)); flash(head.querySelector('[data-act="copy"]'),"copied"); };
+  head.querySelector('[data-act="toggle"]').onclick=(e)=>{ e.stopPropagation(); toggle(); };
+  head.querySelector('[data-act="del"]').onclick=(e)=>{ e.stopPropagation(); generations=generations.filter(x=>x!==g); saveHistory(); renderHistory(); updateFilters(); };
+  fr.appendChild(head);
+  const body=el("div","fbody");
+  body.appendChild(thumbCol("x · clean", g.thumbs.clean));
+  body.appendChild(thumbCol(`δ · ×${g.thumbs.gain}`, g.thumbs.noise));
+  body.appendChild(thumbCol("x+δ", g.thumbs.pert));
+  body.appendChild(frameStats(g));
+  fr.appendChild(body);
+  return fr;
+}
+function thumbCol(lab,url){ const d=el("div"); d.appendChild(el("div","minilab",lab)); const im=document.createElement("img"); im.src=url; im.style.width="100%"; im.style.aspectRatio="1/1"; im.style.borderRadius="6px"; im.style.imageRendering="pixelated"; im.style.background="#000"; d.appendChild(im); return d; }
+function frameStats(g){
+  const model=MODELS.find(x=>x.id===g.modelId);
+  const d=el("div","fstats");
+  d.appendChild(stackedProb(g.att.probs, g.att.pred));
+  const dP=g.att.pfake-g.clean.pfake, dU=g.att.unc-g.clean.unc;
+  d.appendChild(meterRow("p(fake) → moderation", g.clean.pfake, g.att.pfake, pfakeCol(dP),
+    [{to:T_LOW,color:Z_ALLOW},{to:T_HIGH,color:Z_REVIEW},{to:1,color:Z_FLAG}], null, {mini:true, attColor:actionColor(g.att.action)}));
+  d.appendChild(meterRow(model.evidential?"uncertainty (entropy)":"uncertainty (1−maxp)",
+    g.clean.unc, g.att.unc, uncCol(dU),
+    [{to:T_UNC,color:Z_AUTO},{to:1,color:Z_GATE}], {gate:{at:T_UNC}}, {mini:true, attColor:uncCol(dU)}));
+  d.appendChild(el("div","cap",`${g.clean.action} → ${g.att.action} · eff L∞ ${fmtNum(g.effEps)} · L2 ${fmtNum(g.l2)}`));
+  d.appendChild(el("div",`headline ${g.headlineClass}`, escapeHtml(g.narrative)));
+  return d;
+}
+function flash(node,txt){ const o=node.textContent; node.textContent=txt; setTimeout(()=>node.textContent=o,900); }
+
+/* ==========================================================================
+   CONTROLS wiring
+   ========================================================================== */
+function buildModelSelect(){
+  const s=document.getElementById("modelSel"); s.innerHTML="";
+  const cats={};
+  MODELS.forEach(m=>{ (cats[m.cat]=cats[m.cat]||[]).push(m); });
+  Object.entries(cats).forEach(([cat,list])=>{
+    const og=el("optgroup"); og.label=cat;
+    list.forEach(m=>{ const o=el("option"); o.value=m.id; o.textContent=m.name; og.appendChild(o); });
+    s.appendChild(og);
+  });
+  s.value=sel.model;
+  s.onchange=()=>{ sel.model=s.value; refreshModelMeta(); };
+  refreshModelMeta();
+}
+function refreshModelMeta(){
+  const m=MODELS.find(x=>x.id===sel.model);
+  const tax=document.getElementById("modelTax");
+  tax.innerHTML=`<span class="tag"><span class="dot" style="background:${m.color}"></span>${m.cat}</span><span class="tag">${m.wrapper}</span><span class="tag">u = ${m.head}</span>`;
+  document.getElementById("modelMeta").innerHTML=`<b>Defends:</b> ${m.defends}`;
+}
+function buildAttackSelect(){
+  const s=document.getElementById("attackSel"); s.innerHTML="";
+  const fams={prediction:"prediction (label axis)", confidence:"confidence axis", uncertainty:"uncertainty", evidence:"evidence"};
+  Object.keys(fams).forEach(fam=>{
+    const list=ATTACKS.filter(a=>a.fam===fam); if(!list.length)return;
+    const og=el("optgroup"); og.label=fams[fam];
+    list.forEach(a=>{ const o=el("option"); o.value=a.id; o.textContent=a.name+(a.gradFree?" · gradient-free":"")+(a.minNorm?" · min-norm":""); og.appendChild(o); });
+    s.appendChild(og);
+  });
+  s.value=sel.attack;
+  s.onchange=()=>{ sel.attack=s.value; refreshAttackMeta(); buildEpsChips(); };
+  refreshAttackMeta();
+}
+function refreshAttackMeta(){
+  const a=ATTACKS.find(x=>x.id===sel.attack);
+  const tax=document.getElementById("attackTax");
+  const bits=[`<span class="tag"><span class="dot" style="background:${FAMCOL[a.fam]}"></span>${a.fam}</span>`,
+              `<span class="tag">${a.norm.toUpperCase()}</span>`];
+  if(a.dir!=="none") bits.push(`<span class="tag">${a.dir}</span>`);
+  if(a.gradFree) bits.push(`<span class="tag">gradient-free</span>`);
+  if(a.minNorm) bits.push(`<span class="tag">min-norm</span>`);
+  if(a.labels) bits.push(`<span class="tag">uses labels</span>`);
+  tax.innerHTML=bits.join("");
+}
+function buildEpsChips(){
+  const a=ATTACKS.find(x=>x.id===sel.attack);
+  const presets = a.norm==="l2" ? EPS_L2 : EPS_LINF;
+  document.getElementById("epsLabel").textContent = a.norm==="l2"
+    ? (a.minNorm? "Epsilon — L2 cap on the answer" : "Epsilon — L2 budget")
+    : (a.minNorm? "Epsilon — L∞ cap on the answer" : "Epsilon — L∞ budget");
+  // keep eps valid for this norm
+  if(!presets.some(p=>Math.abs(p.v-sel.eps)<1e-6)) sel.eps = a.norm==="l2"?0.5:EPS8;
+  const host=document.getElementById("epsChips"); host.innerHTML="";
+  presets.forEach(p=>{
+    const c=el("div","chip"+(Math.abs(p.v-sel.eps)<1e-6?" sel":""), `${p.label}<div style="font-size:9.5px;color:var(--dim)">${p.note}</div>`);
+    c.onclick=()=>{ sel.eps=p.v; buildEpsChips(); };
+    host.appendChild(c);
+  });
+}
+
+/* ==========================================================================
+   FILES: drop + sample generation + selector
+   ========================================================================== */
+function addFile(name, gt, dataURL){
+  const id="f"+(files.length)+"_"+hashStr(name+Math.floor(performance.now()));
+  const img=new Image();
+  const rec={id,name,gt,src:dataURL,img,ready:false};
+  img.onload=()=>{ rec.ready=true; renderFileList(); if(!activeId){ setActive(id); } };
+  img.src=dataURL;
+  files.push(rec);
+  renderFileList();
+  return id;
+}
+function setActive(id){ activeId=id; const f=files.find(x=>x.id===id); if(f){ sel_gt(f.gt); } renderFileList(); document.getElementById("runBtn").disabled=false; }
+function sel_gt(v){ document.getElementById("gtSel").value=v||"unknown"; }
+function renderFileList(){
+  const host=document.getElementById("fileList"); host.innerHTML="";
+  files.forEach(f=>{
+    const it=el("div","fileitem"+(f.id===activeId?" sel":""));
+    const im=document.createElement("img"); im.src=f.src; im.alt="";
+    const meta=el("div","meta");
+    meta.innerHTML=`<div class="nm" title="${escapeAttr(f.name)}">${escapeHtml(f.name)}</div>
+      <div class="dt"><span class="gt-badge gt-${f.gt}">${f.gt}</span></div>`;
+    it.appendChild(im); it.appendChild(meta);
+    it.onclick=()=>setActive(f.id);
+    host.appendChild(it);
+  });
+}
+function handleFiles(fileList){
+  [...fileList].forEach(file=>{
+    if(!file.type.startsWith("image/")) return;
+    const rd=new FileReader();
+    rd.onload=e=> addFile(file.name, "unknown", e.target.result);
+    rd.readAsDataURL(file);
+  });
+}
+/* --- procedural sample images so the demo runs with zero uploads --- */
+function makeSample(kind){
+  const S=200; const c=document.createElement("canvas"); c.width=S;c.height=S; const x=c.getContext("2d");
+  if(kind==="real"){
+    const g=x.createLinearGradient(0,0,S,S); g.addColorStop(0,"#6b7a86");g.addColorStop(1,"#c7b9a6");
+    x.fillStyle=g; x.fillRect(0,0,S,S);
+    x.fillStyle="rgba(120,110,95,.5)";
+    for(let i=0;i<40;i++){ x.beginPath(); x.ellipse(Math.random()*S,Math.random()*S,20+Math.random()*40,14+Math.random()*30,Math.random()*3,0,7); x.fill(); }
+  } else if(kind==="synthetic"){
+    x.fillStyle="#2a2f3a"; x.fillRect(0,0,S,S);
+    for(let i=0;i<26;i++){ const r=8+i*4; x.strokeStyle=`hsl(${200+i*4},60%,${40+i}%)`; x.lineWidth=2; x.beginPath(); x.arc(S/2,S/2,r,0,7); x.stroke(); }
+    // symmetric bright band
+    const g=x.createLinearGradient(0,0,0,S); g.addColorStop(0,"#e8c07a");g.addColorStop(.5,"#f5e4c0");g.addColorStop(1,"#e8c07a");
+    x.globalAlpha=.35; x.fillStyle=g; x.fillRect(S*0.35,0,S*0.30,S); x.globalAlpha=1;
+  } else { // tampered — smooth base with a spliced high-frequency block
+    const g=x.createRadialGradient(S/2,S/2,10,S/2,S/2,S/1.2); g.addColorStop(0,"#8a94a4");g.addColorStop(1,"#3c4450");
+    x.fillStyle=g; x.fillRect(0,0,S,S);
+    // pasted patch with visible seam + high-freq noise
+    const px=S*0.5,py=S*0.28,pw=S*0.42,ph=S*0.4;
+    const id=x.getImageData(px,py,pw,ph);
+    for(let i=0;i<id.data.length;i+=4){ const v=Math.random()*255; id.data[i]=v; id.data[i+1]=v*0.7; id.data[i+2]=v*0.5; id.data[i+3]=255; }
+    x.putImageData(id,px,py);
+    x.strokeStyle="rgba(0,0,0,.55)"; x.lineWidth=2; x.strokeRect(px,py,pw,ph);
+  }
+  return c.toDataURL("image/png");
+}
+function loadSamples(){
+  addFile("sample_real.png","real",makeSample("real"));
+  addFile("sample_synthetic.png","synthetic",makeSample("synthetic"));
+  addFile("sample_tampered.png","tampered",makeSample("tampered"));
+}
+
+/* ==========================================================================
+   OVERLAYS (model math + attack detail)
+   ========================================================================== */
+function openModelModal(){
+  const m=MODELS.find(x=>x.id===sel.model);
+  const eqns=m.objective.map(([e,c])=> e? `<div>${e}</div>`+(c?`<div class="c">${c}</div>`:"") : (c?`<div class="c">${c}</div>`:"")).join("");
+  const prof=(t,v,col)=>`<div class="prof"><div class="pt">${t}</div><div class="pv">${(v*100).toFixed(0)}%</div><div class="pbar"><i style="width:${v*100}%;background:${col}"></i></div></div>`;
+  modal(m.color, m.name, `
+    <div class="cat">${m.cat} · wrapper: ${m.wrapper} · uncertainty score u = ${m.head}</div>
+    <p><b>What it defends.</b> ${m.defends}</p>
+    <p style="margin-top:14px"><b>Mathematics selected during training</b></p>
+    <div class="eqn">${eqns}</div>
+    <p><b>Illustrative robustness profile</b> — the priors that steer this demo's surrogate:</p>
+    <div class="profile">
+      ${prof("Clean accuracy", m.clean, "var(--ok)")}
+      ${prof("Label-axis robustness", m.labelRobust, "var(--label)")}
+      ${prof("Confidence (gradient)", m.confRobustGrad, "var(--confidence)")}
+      ${prof("Confidence (query)", m.confRobustQuery, "var(--evidence)")}
+    </div>
+    ${m.id==="evidential_adversarial" ? `<div class="headline hl-warn" style="margin-top:6px">Note the gap between gradient (85%) and query (35%) confidence robustness — that gap is <b>gradient masking</b>. Run <b>EvidenceTargetedPGD</b> (stalls) then <b>QueryConfidence</b> (folds) on this arm to see it.</div>`:""}
+    <div class="cite">${m.cite}</div>
+  `);
+}
+function openAttackModal(){
+  const a=ATTACKS.find(x=>x.id===sel.attack);
+  const kv=(k,v)=>`<div class="k">${k}</div><div class="v">${v}</div>`;
+  modal(FAMCOL[a.fam], a.name, `
+    <div class="cat">${a.fam} axis${a.dir!=="none"?" · "+a.dir:""}</div>
+    <p>${a.mech}</p>
+    <div class="kv">
+      ${kv("family", a.fam)}
+      ${kv("direction", a.dir)}
+      ${kv("norm", a.norm.toUpperCase()+(a.minNorm?" (minimum-norm — ε caps the answer)":" (fixed budget)"))}
+      ${kv("gradient-free", a.gradFree?"yes — immune to gradient masking":"no — uses model gradients")}
+      ${kv("uses ground-truth labels", a.labels?"yes (stronger threat model)":"no (label-free, realisable)")}
+      ${kv("argmax", (a.effect==="flip")?"target — tries to change the prediction":"held fixed — a pure confidence/uncertainty attack")}
+    </div>
+    ${a.fam==="confidence" ? `<div class="headline hl-warn">A confidence attack leaves accuracy <b>bit-identical</b> and moves only the confidence attached to it — so an accuracy monitor sees a healthy system while selective risk collapses. That invisibility is the reason this harness exists.</div>`:""}
+    ${a.gradFree ? `<div class="headline hl-ok" style="margin-top:8px">Because it never reads a gradient, this attack is the honest test of an evidential defence: if failure-detection AUROC survives it, the robustness is real; if it survives the gradient attacks but folds here, it was gradient masking.</div>`:""}
+    <div class="cite">src/trustfake/attacks/${a.id.replace(/_(over|under)conf$/,"").replace("query","query_confidence").replace(/^a3$/,"adaptive_autoattack")}.py · taxonomy from attacks/abc.py</div>
+  `);
+}
+function modal(color,title,body){
+  const m=document.getElementById("modal");
+  m.innerHTML=`<div class="mh"><span class="dot" style="background:${color}"></span><h2>${escapeHtml(title)}</h2><span class="x" id="mx">✕</span></div><div class="mb">${body}</div>`;
+  document.getElementById("overlay").classList.add("on");
+  document.getElementById("mx").onclick=closeModal;
+}
+function openDemoModal(){
+  modal("var(--warn)","About this demo",`
+    <p>This is a <b>front-end demo</b> for the TrustFake harness. Everything you configure is real:
+    the models, attacks, families and ε budgets are read straight from <code>src/trustfake</code>, and
+    the <b>noise δ is computed on the actual pixels</b> of the image you drop, honestly L∞- or L2-bounded.</p>
+    <p>What is <b>simulated</b> is the forward pass. The repository ships no trained SID-Set weights, so the
+    class scores, uncertainty and moderation verdict come from a <b>deterministic surrogate</b> rather than a
+    real checkpoint. The surrogate is deliberately wired so the <i>qualitative</i> story matches the findings the
+    harness measures:</p>
+    <ul>
+      <li>a <b>confidence attack</b> holds accuracy bit-identical while collapsing selective risk;</li>
+      <li><b>label-axis defences</b> (PGD-AT, TRADES, AT+KL, MART) resist prediction flips but not confidence attacks;</li>
+      <li>the <b>evidential</b> arm resists gradient confidence attacks yet <b>folds to the gradient-free query attack</b> — gradient masking.</li>
+    </ul>
+    <p>To wire it to a real model, replace <code>surrogateForward()</code> with a call to a served
+    <code>TrustFakeWrapper.forward()</code> and <code>buildPerturbation()</code> with the real
+    <code>attack.run()</code> from <code>src/trustfake/attacks</code>.</p>
+  `);
+}
+function closeModal(){ document.getElementById("overlay").classList.remove("on"); }
+
+/* ==========================================================================
+   PERSISTENCE + filters + export
+   ========================================================================== */
+function saveHistory(){ try{ localStorage.setItem(LS_KEY, JSON.stringify({genCounter, generations})); }catch(e){} }
+function loadHistory(){
+  try{ const raw=localStorage.getItem(LS_KEY); if(!raw)return; const o=JSON.parse(raw);
+    generations=o.generations||[]; genCounter=o.genCounter||generations.length; }catch(e){}
+}
+function updateFilters(){
+  const setOpts=(id,vals,cur)=>{ const s=document.getElementById(id); const keep=s.value; s.innerHTML=`<option value="">${s.dataset.all}</option>`+vals.map(v=>`<option value="${v.id}">${escapeHtml(v.name)}</option>`).join(""); s.value=keep; };
+  const models=[...new Set(generations.map(g=>g.modelId))].map(id=>({id,name:MODELS.find(m=>m.id===id).name}));
+  const atks=[...new Set(generations.map(g=>g.attackId))].map(id=>({id,name:ATTACKS.find(a=>a.id===id).name}));
+  const fams=[...new Set(generations.map(g=>g.fam))].map(id=>({id,name:id}));
+  const fm=document.getElementById("fModel"); fm.dataset.all="all models"; setOpts("fModel",models);
+  const fa=document.getElementById("fAttack"); fa.dataset.all="all attacks"; setOpts("fAttack",atks);
+  const ff=document.getElementById("fFam"); ff.dataset.all="all families"; setOpts("fFam",fams);
+}
+function exportXml(){
+  const doc=`<?xml version="1.0" encoding="UTF-8"?>\n<trustfake_experiment count="${generations.length}" exported="${new Date().toISOString()}">\n`+
+    generations.slice().reverse().map(g=> xmlOf(g,true).split("\n").map(l=>"  "+l).join("\n")).join("\n")+
+    `\n</trustfake_experiment>\n`;
+  const blob=new Blob([doc],{type:"application/xml"});
+  const url=URL.createObjectURL(blob); const a=document.createElement("a");
+  a.href=url; a.download="trustfake_experiment.xml"; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+/* ---- misc helpers ---- */
+function escapeHtml(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function escapeAttr(s){ return escapeHtml(s).replace(/"/g,"&quot;"); }
+
+/* ==========================================================================
+   INIT
+   ========================================================================== */
+function init(){
+  buildModelSelect();
+  buildAttackSelect();
+  buildEpsChips();
+  loadSamples();
+  loadHistory();
+  renderHistory(); updateFilters();
+  if(generations.length){ /* rehydrate stage with newest */ renderStage(generations[0]); document.getElementById("stageId").textContent="#"+String(generations[0].n).padStart(3,"0"); }
+
+  // drop zone
+  const drop=document.getElementById("drop"), fi=document.getElementById("fileInput");
+  drop.onclick=()=>fi.click();
+  fi.onchange=()=>handleFiles(fi.files);
+  ["dragenter","dragover"].forEach(ev=> drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("hot");}));
+  ["dragleave","drop"].forEach(ev=> drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hot");}));
+  drop.addEventListener("drop",e=> handleFiles(e.dataTransfer.files));
+  // allow dropping anywhere on the page
+  window.addEventListener("dragover",e=>e.preventDefault());
+  window.addEventListener("drop",e=>{ e.preventDefault(); if(e.target.closest("#drop"))return; handleFiles(e.dataTransfer.files); });
+
+  document.getElementById("gtSel").onchange=e=>{ const f=files.find(x=>x.id===activeId); if(f){ f.gt=e.target.value; renderFileList(); } };
+  document.getElementById("runBtn").onclick=runGeneration;
+  document.getElementById("modelInfo").onclick=openModelModal;
+  document.getElementById("attackInfo").onclick=openAttackModal;
+  document.getElementById("demoTag").onclick=openDemoModal;
+  document.getElementById("overlay").onclick=e=>{ if(e.target.id==="overlay") closeModal(); };
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape")closeModal(); if(e.key==="Enter"&&!document.getElementById("overlay").classList.contains("on")&&activeId) runGeneration(); });
+  ["fModel","fAttack","fFam"].forEach(id=> document.getElementById(id).onchange=renderHistory);
+  document.getElementById("expBtn").onclick=exportXml;
+  document.getElementById("clearBtn").onclick=()=>{ if(confirm("Clear the experimental history?")){ generations=[]; genCounter=0; saveHistory(); renderHistory(); updateFilters(); document.getElementById("stage").innerHTML=`<div class="empty"><div class="em">◇</div>History cleared.</div>`; document.getElementById("stageId").textContent=""; } };
+
+  document.getElementById("foot").innerHTML=`
+    <b>TrustFake · Attack Playground.</b> Model arms from <code>src/trustfake/pipes/train</code>,
+    attack taxonomy from <code>src/trustfake/attacks</code>, 3-class SID-Set (real / synthetic / tampered,
+    <code>p(fake)=1−P(real)</code>), moderation thresholds t_low=${T_LOW}, t_high=${T_HIGH}, t_unc=${T_UNC}
+    from <code>metrics/moderation.py</code>. Perturbations are real and ε-bounded; predictions are a
+    deterministic surrogate — <a href="#" onclick="openDemoModal();return false;">what's real vs. simulated</a>.`;
+}
+window.openDemoModal=openDemoModal;
+document.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>
