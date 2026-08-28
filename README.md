@@ -84,6 +84,44 @@ The official SID-Set test split is withheld by the dataset authors; everything c
 
 The datamodule reads the parquet shards directly from `${DATA_PATH}/sid_set` -- fetch them with [`jobs/download_sidset.sh`](jobs/download_sidset.sh).
 
+### The tampered class
+
+The third of SID-Set that is real images with a local AI edit is the class
+detectors fail on, and the harness makes that failure measurable rather than
+inferable:
+
+- **Per-class rows.** Every classification table carries
+  `recall_real / recall_synthetic / recall_tampered` (precision beside each).
+  The macro and top-1 averages both move when tampered collapses, but into
+  values that could mean many things; the per-class row is where "the model
+  does not detect tampering" is legible as itself.
+- **Per-modality detection AUROC.** `detection_auroc` folds synthetic and
+  tampered into one "fake", and the synthetic half -- the easy half --
+  carries the average. `detection_auroc_tampered` and
+  `detection_auroc_synthetic` ask the same ranking question (the deployed
+  `p(fake)` score against real) of one modality at a time. A tampered
+  ranking at chance hides inside a healthy-looking fold; it cannot hide in
+  its own row.
+- **`input_mode: crop`** (datamodule) trades the default
+  resize-everything-to-224 for fixed-size crops at native resolution.
+  The tampered evidence is high-frequency and local -- seam residue,
+  re-decoded texture inside the edit -- and a bilinear resize of a 1024px
+  image to 224 is a ~4.6x low-pass that erases it before training starts,
+  leaving semantics, and tampered images are semantically real. Crop mode is
+  a different protocol (a single crop can miss an off-centre edit, so it
+  understates tampered recall on large images); label it in any table it
+  appears in, and fit/evaluate under the same mode. The completion of this
+  line -- dense or multi-crop scoring pooled with top-k, using the tampered
+  masks the shards already carry -- is future work (`TODO.md` §4).
+
+One interaction to keep in mind when reading adversarial arms: L∞
+adversarial training pushes a model toward low-frequency, semantic features
+(Yin et al. 2019), which is exactly the band the tampered signal is not in.
+Whether an adversarially trained arm pays for its robustness
+disproportionately with `recall_tampered` is now a question the per-class
+rows answer per condition, rather than an effect folded invisibly into the
+macro column.
+
 ### Long runs: resume and precision
 
 Training resumes from `last.ckpt` when one exists under the experiment's
