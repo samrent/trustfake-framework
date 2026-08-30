@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+**The confidence-axis audit, ported to a CLIP encoder (seam 1).** The attack
+battery and the metric stack were already written against
+`TrustFakeWrapper`'s `x -> (logits, probs, preds, uncertainty)` contract and
+nothing else, so auditing a vision encoder for the same failure mode needed a
+module that satisfies that contract, not a second harness.
+
+- **`trustfake.models.torch.clip`**: `CLIPZeroShotClassifier` — a frozen image
+  tower plus frozen, L2-normalized text prototypes as an `x -> logits` module
+  (`logit_scale * cos(f(x), P)`), dropping into `BaseWrapper` unchanged.
+  Prototypes are a buffer, so a checkpoint round-trips without the text tower;
+  `build_text_prototypes` does prompt ensembling over normalized embeddings;
+  `clip_zeroshot` builds from an `open_clip` checkpoint with the import kept
+  lazy, so the test suite runs without the dependency and without the network.
+- **The transfer is pinned by test, not asserted.** `QueryConfidence` — the
+  gradient-free instrument — runs against the zero-shot head and keeps all
+  three of its guarantees there: no parameter gradient touched, argmax
+  preserved, uncertainty moved in the requested direction, inside the budget.
+  That is the claim "the apparatus is task-agnostic" made falsifiable.
+- **Two silent failure modes are written down as tests.** Double normalization
+  (datamodule `Normalize` on top of the encoder's own) raises nothing and
+  changes every number; CLIP's native `logit_scale` (~100) saturates `1 − MSP`
+  into a constant, so failure detection ranks nothing while accuracy is
+  bit-identical — the confidence axis destroyed by a *configuration*, which is
+  the same lesson as the confidence attack, arriving through the front door.
+
+Encoder parameters are frozen (seam 1 audits a pretrained encoder); a test pins
+that this does not block the input gradients the gradient attacks need.
+
 ## TF_03 — 2026-08-26
 
 Three adversarial audits over the TF_02 code, then the fixes. 31 bugs, every

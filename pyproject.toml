@@ -38,6 +38,9 @@ dependencies = [
     "tensorboard>=2.20.0",
     "scikit-image",
     "autoattack @ git+https://github.com/fra31/auto-attack@master",
+    # Seam-1 VLM port: the CLIP image tower + tokenizer. Imported lazily in
+    # trustfake.models.torch.clip so the test suite runs without it.
+    "open_clip_torch>=2.24.0",
     "ipykernel==7.2.0",
 ]
 

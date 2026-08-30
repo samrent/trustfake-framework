@@ -417,6 +417,48 @@ costs are asymmetric. Residual risk is `NaN`, never `0.0`, on an empty
 auto-decide zone, and an infeasible SLA degrades to review-everything. Tune with
 `moderation_sla` and `moderation_review_budget`; disable with `moderate=false`.
 
+## Porting the audit to another component (seam 1)
+
+The confidence-axis apparatus — the attack battery, the failure-detection
+metrics, the selective layer, the ranking protocol — is written against
+`TrustFakeWrapper`'s contract, `x -> (logits, probs, preds, uncertainty)`, and
+against nothing else. It does not know it is scoring a forgery detector. So
+auditing a *different* component for the same failure mode does not mean
+porting the harness; it means presenting that component as the contract.
+
+`trustfake.models.torch.clip` does this for a CLIP-family vision encoder — the
+first seam of the VLM port. A frozen image tower plus frozen text prototypes
+becomes an `x -> logits` module (`logits = logit_scale * cos(f(x), P)`) that
+drops into `BaseWrapper` unchanged, so every confidence attack and every metric
+runs against it as-is:
+
+```bash
+# the zero-shot head; needs open_clip_torch, and see the two caveats below
+uv run python src/test.py model=clip_vit_b32_zeroshot \
+  datamodule.normalization_layer=null +attack=query_confidence
+```
+
+Two things are load-bearing, both silent when wrong:
+
+- **`normalization_layer` must be `null`.** A CLIP encoder carries its own
+  preprocessing statistics and applies them inside the model, because it is not
+  free to be normalized any way you like. The datamodule's ImageNet `Normalize`
+  on top of that double-normalizes the input: no error, right shapes, different
+  numbers. The L_inf ball is unaffected either way — attacks still perturb raw
+  `[0, 1]` pixels — which is exactly why nothing downstream can detect it.
+- **`logit_scale` sets the confidence distribution.** CLIP's shipped scale
+  (~100) saturates the softmax, so `1 − MSP` is ~0 for every input and a
+  failure-detection AUROC computed on it ranks nothing. Temperature is monotone,
+  so *accuracy is identical* and an accuracy check cannot see this. Fit a
+  temperature on the calib split (`### Calibration`) and report it.
+
+The head is a confound — you are measuring an encoder-plus-head bundle, not the
+encoder. That is the deliberate trade at this seam: it is *disclosed*, and it
+buys an argmax-preserving constraint identical to the detector's, so the number
+is directly comparable to the forgery-model anchor. `CLIPZeroShotClassifier.encode`
+is exposed separately for the representation-level seam, where confidence is read
+off the feature geometry instead of a head.
+
 ## Trivial baselines and verification
 
 `python src/baselines.py` reports the metadata floor every detector accuracy
