@@ -439,6 +439,14 @@ class FakeClueDataModule(L.LightningDataModule):
         return self._loader(self._test_ds)
 
     @property
+    def num_classes(self) -> int:
+        """Two. FakeClue does not distinguish synthetic from tampered, so a
+        3-class checkpoint must be folded (see
+        :class:`trustfake.models.torch.BinaryFoldClassifier`) before it is
+        scored here."""
+        return 2
+
+    @property
     def calib_dataset(self) -> FakeClueTorchDataset:
         if self._calib_ds is None:
             raise RuntimeError("Call setup() first.")

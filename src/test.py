@@ -19,6 +19,7 @@ from trustfake.metrics.moderation import (
     fit_thresholds,
     fit_uncertainty_gate,
 )
+from trustfake.models.torch import BinaryFoldClassifier
 from trustfake.models.wrapper import (
     BaseWrapper,
     EvidentialWrapper,
@@ -143,6 +144,27 @@ def run_eval_pipe(cfg: DictConfig):
     except Exception as e:
         logger.exception(f"Error loading model from checkpoint {best_model_path}: {e}")
         raise RuntimeError from e
+
+    # Fold a multi-class model onto a binary benchmark (FakeClue). Applied
+    # AFTER the checkpoint loads, never before: wrapping the module first
+    # would prefix every state_dict key with `inner.` and the load would fail
+    # to match. p_fake = 1 - P(real), the repo-wide definition.
+    if cfg.get("binary_fold", False):
+        if datamodule.num_classes != 2:
+            msg = (
+                f"binary_fold=true but the datamodule reports "
+                f"{datamodule.num_classes} classes; the fold produces exactly 2"
+            )
+            logger.error(msg)
+            raise ValueError(msg)
+        logger.info(
+            "binary_fold: collapsing the model onto 2 classes "
+            f"(real_class={real_class}). This MERGES synthetic and tampered -- "
+            "the per-modality breakout is not available under this fold."
+        )
+        eval_module.model.model = BinaryFoldClassifier(
+            eval_module.model.model, real_class=real_class
+        )
 
     # Temperature scaling: fit on the calib split and freeze before scoring.
     # calib comes from validation shards disjoint from test (see

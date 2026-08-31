@@ -131,3 +131,21 @@ def test_rejects_a_one_column_model():
 def test_rejects_out_of_range_real_class():
     with pytest.raises(ValueError, match="real_class"):
         BinaryFoldClassifier(_ThreeClass(), real_class=5)(torch.rand(4, 4))
+
+
+def test_fold_applies_cleanly_after_a_state_dict_load():
+    """The fold is applied AFTER load_from_checkpoint in src/test.py. Wrapping
+    before the load would prefix every key with `inner.` and the load would
+    silently fail to match -- this pins that post-load wrapping preserves the
+    loaded weights."""
+    torch.manual_seed(4)
+    trained = _ThreeClass()
+    state = trained.state_dict()
+
+    fresh = _ThreeClass()
+    fresh.load_state_dict(state)
+    folded = BinaryFoldClassifier(fresh)
+
+    x = torch.rand(8, 4)
+    expected = torch.softmax(trained(x), dim=1)[:, 0]
+    assert torch.allclose(torch.softmax(folded(x), dim=1)[:, 0], expected, atol=1e-6)

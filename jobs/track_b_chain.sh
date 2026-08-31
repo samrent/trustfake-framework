@@ -98,6 +98,7 @@ step "eval clip_probe : FakeClue (cross-dataset)" eval_fakeclue \
   $PY src/test.py experiment.name="${TAG}_clip_probe" \
     "${CLIP_COMMON[@]}" \
     datamodule=fake_clue \
+    +binary_fold=true \
     datamodule.datamodule.limit_test="${LIMIT_TEST}"
 
 # --- 4. shift ---------------------------------------------------------------
@@ -125,6 +126,7 @@ step "eval ${BASELINE_ARM} : FakeClue" baseline_fakeclue \
   $PY src/test.py experiment.name="${BASELINE_ARM}" \
     "${RESNET_COMMON[@]}" \
     datamodule=fake_clue \
+    +binary_fold=true \
     datamodule.datamodule.limit_test="${LIMIT_TEST}"
 
 step "eval ${BASELINE_ARM} : So-Fake-OOD" baseline_ood \

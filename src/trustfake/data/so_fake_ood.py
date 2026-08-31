@@ -208,6 +208,12 @@ class SoFakeOODDataModule(L.LightningDataModule):
         )
 
     @property
+    def num_classes(self) -> int:
+        """Three -- SID-Set's own label space, which is why the per-modality
+        breakout survives here and does not on FakeClue."""
+        return 3
+
+    @property
     def test_dataset(self) -> SoFakeOODTorchDataset:
         if self._test_ds is None:
             raise RuntimeError("Call setup() first.")
