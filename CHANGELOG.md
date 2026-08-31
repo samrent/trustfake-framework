@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+**Making the tampered-class failure measurable.** The class the detector
+struggles with is the tampered third of SID-Set, and until now the harness
+could not say so: per-class metrics were commented out, the detection AUROC
+folded both fake modalities into one number carried by the easy half, and the
+input pipeline resized every image to 224² — a ~4.6× low-pass that erases the
+high-frequency, local evidence a tampered edit leaves before the model ever
+trains on it.
+
+- **Per-class classification rows.** `recall_real / recall_synthetic /
+  recall_tampered` (precision beside each), named rather than numbered, in
+  every classification table — train/val logs and every eval condition,
+  clean and attacked. Per-class accuracy and F1 deliberately omitted:
+  multiclass accuracy at `average="none"` *is* per-class recall, and F1 is
+  derivable.
+- **Per-modality detection AUROC.** `detection_auroc_tampered` /
+  `detection_auroc_synthetic`: the deployed `p(fake)` score against real,
+  one fake modality at a time, NaN where a split holds no rows of it. A
+  tampered ranking at chance is invisible inside the all-fakes fold (a test
+  pins the case where the fold reads exactly 0.5 while the breakouts read
+  1.0 and 0.0) and cannot hide in its own row.
+- **`input_mode: crop`** on the datamodule (default `resize`, the historical
+  behaviour, byte-identical): fixed-size crops at native resolution — random
+  for train, centre for val/calib/test — no resampling anywhere. Preserves
+  the pixel statistics the resize destroyed; costs a bounded field of view
+  (an off-crop edit is invisible, so tampered recall is *understated* on
+  large images — stated in the config and README, dense/multi-crop scoring
+  is the follow-up in TODO §4). Refused in combination with `squarecrop`,
+  whose whole job is to feed the resize that crop mode removes.
+
+Also recorded: the SID_Set shards already include a `mask` column (binary
+mask of the manipulated region), so mask-guided crops, area-stratified
+tampered recall and the localization extension need no new download.
+
 ## TF_03 — 2026-08-26
 
 Three adversarial audits over the TF_02 code, then the fixes. 31 bugs, every

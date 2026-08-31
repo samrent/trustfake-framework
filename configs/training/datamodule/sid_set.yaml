@@ -32,6 +32,18 @@ datamodule:
   # AND evaluate with the same setting or it is a covariate shift, not a
   # control. Neither control removes the 'short side == 1024' residue.
   squarecrop: false
+  # EVIDENCE CONTROL -- how pixels reach the model. 'resize' (default):
+  # everything is resampled to image_size x image_size, the historical
+  # behaviour. 'crop': no resampling -- train takes a random image_size crop
+  # at native resolution, eval takes the centre crop. The tampered class is
+  # the reason this knob exists: manipulation evidence is high-frequency and
+  # local, and resizing 1024px to 224 is a ~4.6x low-pass that erases it
+  # before training starts. Costs, stated: a single crop can miss an
+  # off-centre edit (understates tampered recall), and crop-mode numbers are
+  # a different protocol from resize-mode numbers -- never mix them in one
+  # table unlabelled. Incompatible with squarecrop (the square crop exists
+  # to feed the resize; the combination is refused, not warned about).
+  input_mode: resize
   # Cap the TEST split to its first N rows (null = the whole split). A prefix,
   # so the capped set is nested inside the full one and both describe the same
   # population -- which is what lets an expensive attack be reported beside a

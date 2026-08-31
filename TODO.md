@@ -87,6 +87,29 @@ the first thing a robustness researcher will ask about.
 - [ ] **Localization sub-task (optional).** The tampered third of SID-Set
       supports localization (SIDA adds a textual-explanation head) — out of the
       current classification + selective scope, noted as a possible extension.
+      Confirmed: the parquet shards already carry a `mask` column (binary mask
+      of the manipulated region), so no extra download is needed for it.
+- [ ] **Tampered detection, the dense half.** The measurement half is done
+      (per-class rows, per-modality detection AUROC, `input_mode: crop`), but
+      a global head over a single view is still the wrong formulation for a
+      local edit: the honest completion is patch-level scores pooled with
+      top-k/max, so 5% edited pixels cannot be outvoted by 95% pristine ones.
+      Ordered steps, each usable alone:
+      1. Multi-crop evaluation: score k crops per image, pool `p(fake)` with
+         max — eval-only, no retraining, uses `input_mode: crop` checkpoints.
+      2. Mask-guided training crops: sample crops that contain tampered
+         pixels with fixed probability (the `mask` column makes this free),
+         removing the label noise a random crop puts on off-crop edits.
+      3. Tampered-area-stratified reporting: `recall_tampered` binned by
+         mask-area fraction — small edits are the hard and interesting bin.
+- [ ] **AT × tampered interaction (measure, then decide).** L∞ adversarial
+      training shifts models toward low-frequency features; the tampered
+      signal is high-frequency. The per-class rows now expose whether
+      `pgd_at`/`trades` pay for robustness disproportionately with
+      `recall_tampered`. If they do, the candidate fix is a robustness target
+      per class — tampered robustified against JPEG/resize (the corruption
+      ladder) rather than against the L∞ ball — which is a protocol decision
+      to make on numbers, not in advance.
 - [ ] **Independent uncertainty producer (the σ seam).** The uncertainty gate
       always reads the wrapper's own score, so it cannot test an uncertainty
       that is *independent* of the confidence the attack moves — which is the

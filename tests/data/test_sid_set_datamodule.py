@@ -10,6 +10,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 import torch
+from PIL import Image
+from torchvision import transforms
 
 from trustfake.data import SIDSetDataModule
 
@@ -154,3 +156,69 @@ def test_missing_shards_raise(tmp_path):
     dm = _datamodule(tmp_path)
     with pytest.raises(FileNotFoundError, match="No SID_Set parquet shards"):
         dm.setup()
+
+
+# ------------------------------------------------- input_mode (evidence)
+
+
+def test_crop_mode_preserves_native_pixels_where_resize_interpolates(tmp_path):
+    """The reason the mode exists: crop mode never resamples, so with
+    image_size equal to the image side the tensor IS the original pixels.
+    The same checkerboard through resize mode comes back with interpolated
+    values -- the high-frequency content blurred, which on a real tampered
+    image is the evidence."""
+    checker = (np.indices((8, 8)).sum(axis=0) % 2 * 255).astype(np.uint8)
+    image = Image.fromarray(np.stack([checker] * 3, axis=-1))
+
+    crop = _datamodule(tmp_path, input_mode="crop", image_size=8).transform(image)
+    assert set(crop.unique().tolist()) == {0.0, 1.0}
+
+    resized = _datamodule(tmp_path, image_size=16).transform(image)
+    interpolated = (resized > 0.0) & (resized < 1.0)
+    assert interpolated.any()
+
+
+def test_crop_mode_trains_random_and_evaluates_deterministic(tmp_path):
+    """Train gets the stochastic view, everything the protocol reads
+    (val/calib/test -- served through `self.transform`) gets the centre
+    crop; neither contains a Resize. In resize mode the two are the same
+    object, so nothing about the historical protocol moved."""
+    dm = _datamodule(tmp_path, input_mode="crop")
+    assert any(
+        isinstance(t, transforms.RandomCrop) for t in dm.train_transform.transforms
+    )
+    assert any(isinstance(t, transforms.CenterCrop) for t in dm.transform.transforms)
+    stages = dm.train_transform.transforms + dm.transform.transforms
+    assert not any("Resize" in repr(t) for t in stages)
+
+    plain = _datamodule(tmp_path)
+    assert plain.train_transform is plain.transform
+    assert any("Resize" in repr(t) for t in plain.transform.transforms)
+
+
+def test_crop_mode_end_to_end_pads_the_small_fixture_images(sid_set_dir):
+    """Fixture images are 8x8 and image_size is 16: both crops must
+    zero-pad rather than crash, and the loader contract (shape, dtype,
+    range) holds unchanged."""
+    dm = _datamodule(sid_set_dir, input_mode="crop")
+    dm.setup()
+
+    x, y = next(iter(dm.train_dataloader()))
+    assert x.shape == (4, 3, 16, 16)
+    assert x.dtype == torch.float32
+    assert y.dtype == torch.long
+
+    x_test, _ = next(iter(dm.test_dataloader()))
+    assert x_test.shape[1:] == (3, 16, 16)
+
+
+def test_crop_mode_refuses_squarecrop(tmp_path):
+    """The square crop exists to feed the resize that crop mode removes;
+    the combination would read as two controls with one inert."""
+    with pytest.raises(ValueError, match="squarecrop"):
+        _datamodule(tmp_path, input_mode="crop", squarecrop=True)
+
+
+def test_unknown_input_mode_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="input_mode"):
+        _datamodule(tmp_path, input_mode="patches")

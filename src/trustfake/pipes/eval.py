@@ -486,7 +486,9 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         Returns:
             MetricCollection: AUROC of ranking fakes above reals by p(fake).
         """
-        return get_detection_metrics(real_class=self._real_class)
+        return get_detection_metrics(
+            real_class=self._real_class, num_classes=self._num_classes
+        )
 
     @property
     def selective_classification_metrics(self) -> MetricCollection:

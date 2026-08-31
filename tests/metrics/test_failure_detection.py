@@ -205,3 +205,79 @@ def test_detection_collection_is_separate_from_failure_detection():
     probs, targets, _, _ = _three_class_batch(seed=6)
     detection.update(torch.tensor(probs), torch.tensor(targets))
     assert float(detection.compute()["detection_auroc"]) == pytest.approx(1.0)
+
+
+# ------------------------------------------ per-modality detection breakout
+
+
+def test_per_modality_breakout_matches_a_manual_subset():
+    """``detection_auroc_tampered`` is the SAME question -- p_fake against
+    the binary label -- asked of the {real, tampered} rows only. Checked
+    against sklearn on exactly that subset."""
+    probs, targets, _, _ = _three_class_batch(seed=7)
+    metric = DetectionAUROC(real_class=0, fake_class=2)
+    metric.update(torch.tensor(probs), torch.tensor(targets))
+
+    keep = (targets == 0) | (targets == 2)
+    expected = roc_auc_score((targets[keep] != 0).astype(int), 1.0 - probs[keep, 0])
+    assert float(metric.compute()) == pytest.approx(expected, abs=1e-6)
+
+
+def test_the_fold_hides_a_tampered_collapse_the_breakout_shows():
+    """THE motivating case. Synthetic is ranked perfectly and tampered is
+    ranked BELOW real -- the model reads edited images as more real than
+    real ones. The all-fakes fold posts exactly 0.5: 'chance', attributable
+    to nothing. The breakouts read 1.0 and 0.0: one modality solved, the
+    other inverted. Without the per-modality rows this failure mode is not
+    representable in the table at all."""
+    targets = torch.tensor([0] * 4 + [1] * 4 + [2] * 4)
+    # p(real): reals 0.5, synthetic 0.02 (caught), tampered 0.9 (missed)
+    p_real = torch.tensor([0.5] * 4 + [0.02] * 4 + [0.9] * 4, dtype=torch.float64)
+    probs = torch.stack([p_real, (1 - p_real) / 2, (1 - p_real) / 2], dim=1)
+
+    def value(**kwargs):
+        metric = DetectionAUROC(**kwargs)
+        metric.update(probs, targets)
+        return float(metric.compute())
+
+    assert value(fake_class=1) == pytest.approx(1.0)
+    assert value(fake_class=2) == pytest.approx(0.0)
+    assert value() == pytest.approx(0.5)
+
+
+def test_breakout_is_nan_when_the_modality_is_absent():
+    """A geometry filter or a capped slice can leave a split with no
+    tampered rows. The breakout reports NaN like every undefined AUROC
+    here -- not 0.0, which would read as an inverted detector, and not a
+    crash, which would abort a run that has done all its other work."""
+    metric = DetectionAUROC(fake_class=2)
+    probs = torch.tensor([[0.9, 0.05, 0.05], [0.1, 0.85, 0.05]]).double()
+    metric.update(probs, torch.tensor([0, 1]))  # one real, one synthetic
+    assert np.isnan(float(metric.compute()))
+
+
+def test_breakout_refuses_fake_class_equal_to_real_class():
+    with pytest.raises(ValueError, match="real_class"):
+        DetectionAUROC(real_class=0, fake_class=0)
+
+
+def test_detection_collection_grows_breakouts_only_when_asked():
+    """The default stays the fold alone (the pre-breakout behaviour). With
+    ``num_classes`` the SID-Set-named breakouts appear beside it and agree
+    with a standalone metric on the same rows."""
+    assert set(get_detection_metrics().keys()) == {"detection_auroc"}
+
+    collection = get_detection_metrics(real_class=0, num_classes=3)
+    assert set(collection.keys()) == {
+        "detection_auroc",
+        "detection_auroc_synthetic",
+        "detection_auroc_tampered",
+    }
+
+    probs, targets, _, _ = _three_class_batch(seed=8)
+    collection.update(torch.tensor(probs), torch.tensor(targets))
+    values = {k: float(v) for k, v in collection.compute().items()}
+
+    keep = (targets == 0) | (targets == 2)
+    expected = roc_auc_score((targets[keep] != 0).astype(int), 1.0 - probs[keep, 0])
+    assert values["detection_auroc_tampered"] == pytest.approx(expected, abs=1e-6)

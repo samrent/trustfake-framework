@@ -16,6 +16,11 @@ artifact they answer):
     resize. Order is the whole substance of it: after the resize every image
     is already square, so a crop there is a no-op and the "control" would
     silently do nothing.
+
+The third knob is about EVIDENCE rather than geometry: `input_mode="crop"`
+replaces the resize with fixed-size crops at native resolution, because the
+resize low-passes away exactly the high-frequency residue a tampered-image
+detector has to read (see the `input_mode` arg on `SIDSetDataModule`).
 """
 
 from __future__ import annotations
@@ -196,6 +201,29 @@ class SIDSetDataModule(L.LightningDataModule):
             resize (`CentreSquareCrop`). The pixel-level geometry control.
             Use it for fit and evaluation together or it is a covariate
             shift, not a control.
+        input_mode: How pixels reach the model. ``"resize"`` (default, the
+            historical behaviour): every image is resampled to
+            ``image_size x image_size``. ``"crop"``: no resampling at all --
+            training takes a random ``image_size`` crop, evaluation takes
+            the centre crop (deterministic; both zero-pad the rare image
+            smaller than ``image_size``). The point is the tampered class:
+            the manipulation evidence is high-frequency and local (seam
+            residue, re-decoded texture), and a bilinear resize of a 1024px
+            image to 224 is a 4.6x low-pass that erases it BEFORE the model
+            trains -- the model then learns whatever survives, which is
+            semantics, and tampered images are semantically real. Crop mode
+            hands the model native pixel statistics instead. Two costs,
+            stated rather than hidden: a single crop sees a fraction of a
+            large image, so an edit outside the crop is invisible and
+            tampered recall is *understated* for off-crop edits (the honest
+            completion is dense/multi-crop scoring with top-k pooling --
+            future work, the shards carry the masks for it); and crop mode
+            is a different protocol, so its numbers must never sit in a
+            table beside resize-mode numbers without saying so. Fit and
+            evaluate under the same mode, like every control here.
+            Incompatible with ``squarecrop`` -- the square crop exists to
+            feed the resize, and composing it with crop mode would read as
+            two controls while one of them changes nothing it claims to.
     """
 
     IMAGE_COLUMN_CANDIDATES = ("image", "img", "pixel_values")
@@ -216,6 +244,7 @@ class SIDSetDataModule(L.LightningDataModule):
         normalization_layer: nn.Module | None = None,
         geometry_filter: str = "none",
         squarecrop: bool = False,
+        input_mode: str = "resize",
         limit_test: int | None = None,
     ) -> None:
         super().__init__()
@@ -241,6 +270,21 @@ class SIDSetDataModule(L.LightningDataModule):
         self.geometry_filter = geometry_filter
         self.limit_test = limit_test
         self.squarecrop = bool(squarecrop)
+        if input_mode not in ("resize", "crop"):
+            msg = f"Unknown input_mode '{input_mode}'. Available: resize | crop"
+            logger.error(msg)
+            raise ValueError(msg)
+        if input_mode == "crop" and self.squarecrop:
+            # Refused rather than composed: the square crop exists to feed
+            # the resize, and in crop mode it would only restrict where the
+            # crops come from -- an effect, but not the one its name claims.
+            msg = (
+                "squarecrop=True with input_mode='crop': the squarecrop "
+                "control feeds the resize that crop mode removes. Use one."
+            )
+            logger.error(msg)
+            raise ValueError(msg)
+        self.input_mode = input_mode
 
         self.num_classes: int = 3
         self.split_provenance: str = SPLIT_PROVENANCE
@@ -253,15 +297,38 @@ class SIDSetDataModule(L.LightningDataModule):
         self._test_ds: SIDSetTorchDataset | None = None
         self._holdout_ds: SIDSetTorchDataset | None = None
 
-        # The crop goes first or it does nothing: Resize makes every image
-        # square, so a crop behind it is a no-op on an already-square tensor.
-        self.transform = transforms.Compose(
-            [
-                *([CentreSquareCrop()] if self.squarecrop else []),
-                transforms.Resize((self.image_size, self.image_size)),
-                transforms.ToTensor(),
-            ]
-        )
+        if self.input_mode == "resize":
+            # The crop goes first or it does nothing: Resize makes every image
+            # square, so a crop behind it is a no-op on an already-square
+            # tensor. One transform for every role, as it always was.
+            self.transform = transforms.Compose(
+                [
+                    *([CentreSquareCrop()] if self.squarecrop else []),
+                    transforms.Resize((self.image_size, self.image_size)),
+                    transforms.ToTensor(),
+                ]
+            )
+            self.train_transform = self.transform
+        else:
+            # Crop mode: native pixels, no resampling. Train crops randomly
+            # (each epoch sees a different window, which is the cheap
+            # substitute for dense coverage); val/calib/test crop the centre,
+            # deterministically -- the calibration temperature and the
+            # moderation thresholds must be fitted on a reproducible view.
+            # `self.transform` stays the EVAL transform: every existing
+            # consumer of the attribute reads the deterministic one.
+            self.train_transform = transforms.Compose(
+                [
+                    transforms.RandomCrop(self.image_size, pad_if_needed=True),
+                    transforms.ToTensor(),
+                ]
+            )
+            self.transform = transforms.Compose(
+                [
+                    transforms.CenterCrop(self.image_size),
+                    transforms.ToTensor(),
+                ]
+            )
 
     def _check_ids(self, dataset: dict[str, Dataset], id_column: str) -> None:
         """Row-key tripwire: img_id must be unique within each role, and
@@ -387,15 +454,21 @@ class SIDSetDataModule(L.LightningDataModule):
             test_size=self.val_fraction, seed=self.seed
         )
 
-        def _wrap(hf_dataset: Dataset) -> SIDSetTorchDataset:
+        def _wrap(
+            hf_dataset: Dataset, transform: transforms.Compose | None = None
+        ) -> SIDSetTorchDataset:
             return SIDSetTorchDataset(
                 hf_dataset,
                 image_column=self.image_column,
                 label_column=self.label_column,
-                transform=self.transform,
+                transform=transform if transform is not None else self.transform,
             )
 
-        self._train_ds = _wrap(fit_split["train"])
+        # Only the fit-train slice gets the (possibly stochastic) train
+        # transform; val is model selection and must see the deterministic
+        # eval view, like calib and test. In resize mode the two are the
+        # same object and this changes nothing.
+        self._train_ds = _wrap(fit_split["train"], transform=self.train_transform)
         self._val_ds = _wrap(fit_split["test"])
         self._calib_ds = _wrap(dataset["calib"])
         test_split = dataset["test"]
@@ -432,7 +505,8 @@ class SIDSetDataModule(L.LightningDataModule):
         logger.info(
             "Geometry protocol -- "
             f"filter: {self.geometry_filter} (roles "
-            f"{list(GEOMETRY_FILTERED_ROLES)}), squarecrop: {self.squarecrop}"
+            f"{list(GEOMETRY_FILTERED_ROLES)}), squarecrop: {self.squarecrop}, "
+            f"input_mode: {self.input_mode}"
         )
 
     def _loader(
