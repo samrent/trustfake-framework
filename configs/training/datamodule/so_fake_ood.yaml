@@ -1,0 +1,30 @@
+datamodule:
+  _target_: trustfake.data.SoFakeOODDataModule
+  _partial_: true
+  # test_image-*.parquet shards from saberzl/So-Fake-OOD (~3 GB each, 46 in
+  # total). A partial download is the normal case, not a broken one.
+  data_dir: ${oc.env:DATA_PATH}/so_fake_ood
+  # null = every shard present. Shards are the unit of sampling, chosen
+  # deterministically from manifest_seed, so the OOD sample is a property of
+  # the protocol rather than of what finished downloading.
+  n_shards: null
+  manifest_seed: 0
+  batch_size: ${dataloaders.batch_size}
+  num_workers: ${dataloaders.num_workers}
+  image_size: 224
+  input_mode: resize
+  limit_test: 1000
+  normalization_layer:
+    _target_: torchvision.transforms.Normalize
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+
+# TEST-ONLY BY CONSTRUCTION. `calib_dataloader` raises. Temperature and the
+# moderation thresholds must be fitted on the IN-DOMAIN calib split and
+# applied here unchanged -- that is the deployment situation, and refitting
+# on shifted data hides the exchangeability violation this condition exists
+# to expose. Report which calib split the thresholds came from.
+#
+# Labels map onto SID-Set's ids (REAL 0 / FULL_SYNTHETIC 1 / TAMPERED 2), so
+# unlike FakeClue the per-modality breakout survives: detection_auroc_tampered
+# and detection_auroc_synthetic are both readable under shift.
