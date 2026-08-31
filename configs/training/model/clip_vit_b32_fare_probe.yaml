@@ -1,0 +1,27 @@
+name: clip_vit_b32_fare_probe
+model:
+  _target_: trustfake.models.torch.clip_probe
+  num_classes: 3
+  # FARE4 (Schlarmann et al., "Robust CLIP"): the SAME ViT-B/32 architecture
+  # and the SAME LAION-2B pretraining as clip_vit_b32_probe, adversarially
+  # fine-tuned at eps=4/255. Swapping it in changes the representation and
+  # nothing else -- same head, same data, same protocol -- so any difference
+  # in the confidence axis is attributable to the encoder.
+  #
+  # THE PREDICTION UNDER TEST (P2 from the VLM theory note): encoder-level
+  # robustification should raise DOWNSTREAM confidence-axis robustness with no
+  # head retraining, because it flattens the feature geometry a confidence
+  # attack exploits. The undefended probe's Phi falls 0.8284 -> 0.4837 (to
+  # chance) under query_underconf; if that collapse shrinks here, the axis is
+  # repairable at the encoder. If it does not, the confidence axis is NOT
+  # reducible to input-space robustness -- a sharper claim, and also a result.
+  model_name: hf-hub:chs20/FARE4-ViT-B-32-laion2B-s34B-b79K
+  pretrained: null   # unused for a hub tag; the tag carries its own weights
+  freeze_backbone: true
+  normalize_features: true
+
+# Same caveats as clip_vit_b32_probe: set the datamodule's
+# `normalization_layer: null` (the encoder normalizes internally), and read the
+# per-modality rows rather than mean accuracy. Adversarial fine-tuning is known
+# to cost clean accuracy, and it may cost tampered recall specifically -- which
+# already collapsed to 0.0503 under shift on the undefended probe.
