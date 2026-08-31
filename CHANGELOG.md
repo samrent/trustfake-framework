@@ -30,6 +30,19 @@ module that satisfies that contract, not a second harness.
 Encoder parameters are frozen (seam 1 audits a pretrained encoder); a test pins
 that this does not block the input gradients the gradient attacks need.
 
+Smoke on the real `ViT-B-32/laion2b_s34b_b79k` checkpoint (procedural images,
+**not** SID-Set — no dataset number is claimed here): the head builds, prototypes
+come out `(3, 512)` and unit-norm, `logit_scale` is 100.0 as expected, and
+zero-shot semantics are correct end-to-end, which is what says the normalization
+is right. `QueryConfidence` at eps = 8/255, 150 queries, then moves the
+confidence axis on a CLIP encoder with the instrument unchanged: `over` takes
+mean `1 - MSP` from 3.32e-02 to 1.12e-04 (a ~300x collapse), `under` to 1.35e-01,
+both with the argmax preserved on every sample, inside the budget, and touching
+no parameter gradient. Saturation turns out to be input-dependent: the same head
+reads 6.85e-05 on unambiguous inputs and 3.32e-02 (max 0.27) on ambiguous ones,
+so "the native scale saturates" has to be checked against the real distribution
+rather than assumed.
+
 ## TF_03 — 2026-08-26
 
 Three adversarial audits over the TF_02 code, then the fixes. 31 bugs, every

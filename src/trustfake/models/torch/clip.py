@@ -225,19 +225,15 @@ def clip_zeroshot(
         float(model.logit_scale.exp().item()) if logit_scale is None else logit_scale
     )
     logger.info(
-        "clip_zeroshot: %s/%s, %d classes, %d templates, logit_scale=%.2f",
-        model_name,
-        pretrained,
-        len(classnames),
-        len(templates),
-        scale,
+        f"clip_zeroshot: {model_name}/{pretrained}, {len(classnames)} classes, "
+        f"{len(templates)} templates, logit_scale={scale:.2f}"
     )
     if logit_scale is None and scale > 50:
         logger.warning(
-            "logit_scale=%.1f is the checkpoint's native scale: max-probability "
-            "will saturate and 1-MSP will be near-degenerate. Fit a temperature "
-            "on the calib split before reporting failure detection.",
-            scale,
+            f"logit_scale={scale:.1f} is the checkpoint's native scale: "
+            "max-probability will saturate and 1-MSP will be near-degenerate. "
+            "Fit a temperature on the calib split before reporting failure "
+            "detection."
         )
 
     return CLIPZeroShotClassifier(
