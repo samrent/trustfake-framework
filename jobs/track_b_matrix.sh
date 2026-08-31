@@ -45,8 +45,21 @@ say() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG/matrix.log"; }
 # Sequential only. Concurrency is measurably NEGATIVE on this card: two jobs
 # ran slower than one and aggregate throughput fell 35%, because consumer
 # GeForce has no MPS and CUDA contexts time-slice instead of overlapping.
-for other in "src/sweep.py --strategy" "jobs/premise_test.sh" "jobs/track_b_chain.sh"; do
-  while pgrep -f "$other" >/dev/null 2>&1; do say "waiting on: $other"; sleep 60; done
+# Patterns are anchored on the interpreter ("bash jobs/x.sh"), NOT the bare
+# script path. A bare path also matches any *watcher* whose own command line
+# mentions the script -- including `until ! pgrep -f "jobs/track_b_chain.sh"`,
+# which matches itself and can therefore never exit. That deadlocked this
+# script for ten minutes waiting on a job that had already finished.
+# The deadline is the second guard: never block forever on a wait.
+WAIT_DEADLINE=$((SECONDS + 1800))
+for other in "src/sweep.py --strategy" "bash jobs/premise_test.sh" "bash jobs/track_b_chain.sh"; do
+  while pgrep -f "$other" | grep -qv "^$$$"; do
+    if [ $SECONDS -gt $WAIT_DEADLINE ]; then
+      say "gave up waiting on: $other (30 min) -- proceeding"
+      break
+    fi
+    say "waiting on: $other"; sleep 60
+  done
 done
 
 cell() {  # cell <model> <dataset> <condition>
