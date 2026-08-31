@@ -31,13 +31,17 @@ datamodule, `CLIPProbeClassifier`, `BinaryFoldClassifier`, and `jobs/track_b_cha
 
 ## Next steps
 
-1. The chain was relaunched after the calib fix; the four completed steps skip via `.done`
-   markers. Confirm the two So-Fake-OOD legs finished and read their numbers.
-2. Read `detection_auroc_tampered` vs `detection_auroc_synthetic` — **not** mean accuracy. Only
-   the So-Fake-OOD leg carries that breakout; FakeClue's binary fold destroys it.
-3. The open research question has moved: since a better backbone did **not** fix cross-dataset
-   performance ([[clip-backbone-fixes-cross-dataset]]), the next lever is multi-dataset training
-   — which is where the colleague's instinct pointed. No combined datamodule exists yet.
+1. **The chain is complete** — all six steps, 2026-08-31 20:00. Numbers are in
+   [[snapshots/2026-08-31-track-b-first-results]].
+2. The result that should drive the next run: under shift the two models fail on **opposite
+   classes** — the CLIP probe finds synthetic (recall 0.7928) and misses tampered (0.0503); the
+   ResNet misses synthetic (0.0055) and does better on tampered (0.2725). That makes multi-dataset
+   (or multi-backbone) training a *directed* hypothesis rather than a guess.
+3. Still unbuilt: a combined SID-Set + FakeClue datamodule, and the decision about how FakeClue's
+   binary fakes map into the 3-class space.
+4. Worth trying with a measured reason now: **ViT-B/16**. The patch-32 low-pass hypothesis was
+   false in-domain but the tampered collapse under shift reinstates it — see
+   [[clip-low-pass-destroys-tampered]].
 
 ## Blockers
 

@@ -31,4 +31,18 @@ generalisation lever.
 that probe was *fitted on FakeClue rows* and tested on held-out FakeClue. It was never comparable
 to a SID-Set-trained model evaluated zero-shot. The 0.52 above is the fair comparison.
 
-**Where that points:** multi-dataset training, not a better backbone.
+## Qualified the same day by the So-Fake-OOD leg
+
+On FakeClue the rejection stands: both models at chance. But on So-Fake-OOD the backbone **does**
+matter — the probe holds `detection_auroc` 0.7266 and `fd_auroc` 0.6665 where the ResNet sits at
+0.5023 and 0.4703 (the latter *below* chance, i.e. anti-correlated uncertainty).
+
+So the honest claim is narrower than either the original hypothesis or its first rejection: **a
+foundation backbone buys real robustness to distribution shift, and buys nothing on FakeClue.**
+Which of those generalises is unresolved with one shift dataset and one cross-dataset benchmark,
+and FakeClue's own metadata floor (0.690) makes it a harsh test that may say more about the
+benchmark than the model.
+
+**Where that points:** multi-dataset training remains the untested lever, and it is now the
+interesting one — the two models fail on *opposite* classes under shift, so combining their
+training data is a directed hypothesis rather than a shot in the dark.

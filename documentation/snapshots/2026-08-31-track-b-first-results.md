@@ -33,7 +33,27 @@ Trainable parameters: **1,539** of 87.9 M (the linear head only).
 Read against FakeClue's **0.638 majority floor** and **0.690 metadata rule** — both models are
 below both. The binary fold merges synthetic and tampered, so no per-modality breakout exists here.
 
-## So-Fake-OOD
+## So-Fake-OOD (distribution shift, thresholds from in-domain SID-Set calib)
 
-Not yet measured. Both legs failed on the calib guard and were re-run after
-[[ood-thresholds-come-from-in-domain-calib]] shipped.
+| metric | CLIP probe | e8_standard ResNet |
+|---|---:|---:|
+| accuracy | 0.4810 | 0.3516 |
+| fd_auroc | **0.6665** | 0.4703 |
+| detection_auroc | **0.7266** | 0.5023 |
+| detection_auroc_synthetic | 0.8586 | 0.4869 |
+| detection_auroc_tampered | 0.6002 | 0.5171 |
+| recall_real | 0.6000 | 0.7769 |
+| recall_synthetic | 0.7928 | **0.0055** |
+| recall_tampered | **0.0503** | 0.2725 |
+
+Three-class chance is 0.333 for accuracy, 0.5 for the AUROCs.
+
+**The backbone matters under shift, unlike on FakeClue.** The probe keeps real signal
+(detection_auroc 0.7266) where the ResNet is exactly at chance (0.5023). The ResNet's fd_auroc of
+0.4703 is *below* chance — its uncertainty is anti-correlated with its errors, which is the
+confident-error regime this project exists to measure.
+
+**The two models fail in opposite directions.** The probe finds synthetic (recall 0.7928) and
+almost entirely misses tampered (**0.0503**); the ResNet almost entirely misses synthetic
+(**0.0055**) and does better on tampered (0.2725). Neither is usable, but they are not usable in
+different ways — an ensemble or a joint-training argument starts here.
