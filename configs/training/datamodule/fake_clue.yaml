@@ -1,0 +1,37 @@
+datamodule:
+  _target_: trustfake.data.FakeClueDataModule
+  _partial_: true
+  # test.zip (1.3 GB) + data_json/test.json, fetched from lingcco/FakeClue on
+  # first use. The 28 GB train.zip is NOT needed: FakeClue is used here as a
+  # cross-dataset benchmark, not a training set.
+  data_dir: ${oc.env:DATA_PATH}/fake_clue
+  split: test
+  # Rows dealt to calib, where the temperature and the moderation thresholds
+  # are fitted and frozen before test is read.
+  calib_fraction: 0.3
+  # IDENTITY FIREWALL. FakeClue's 1168 deepfake rows come from 666 FF++
+  # identities (mean 3.15 rows each), and 194 identities appear under BOTH
+  # labels -- the same face as real and as fake. A row-level split puts a
+  # person on both sides of the boundary and measures memorisation. Union-find
+  # over the identities in each frame directory keeps components whole.
+  # false reproduces the naive split and MUST be disclosed if reported.
+  group_split: true
+  # Project constant, deliberately independent of experiment.seed, so the
+  # partition does not move when a training run does.
+  manifest_seed: 0
+  batch_size: ${dataloaders.batch_size}
+  num_workers: ${dataloaders.num_workers}
+  image_size: 224
+  # resize (historical) | crop (native-resolution centre crop, no resampling).
+  # Evaluate under the mode the checkpoint was fitted under.
+  input_mode: resize
+  # Prefix cap on test, so an expensive attack is comparable to a cheap one.
+  # calib is never capped.
+  limit_test: null
+  # FakeClue is BINARY: 0 = real, 1 = fake AFTER remapping (its own json uses
+  # the opposite convention). A 3-class SID-Set checkpoint needs its synthetic
+  # and tampered columns folded to p_fake before it can be scored here.
+  normalization_layer:
+    _target_: torchvision.transforms.Normalize
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]

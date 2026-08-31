@@ -1,4 +1,5 @@
 from .baselines import compute_trivial_baselines, headline, image_dims_and_format
+from .fake_clue import FAKE_CLUE_PROVENANCE, FakeClueDataModule
 from .manifest import (
     GEOMETRY_FILTERS,
     PROFILES,
@@ -14,6 +15,8 @@ from .visualize import visualize_sample
 
 __all__ = [
     "SIDSetDataModule",
+    "FakeClueDataModule",
+    "FAKE_CLUE_PROVENANCE",
     "CentreSquareCrop",
     "visualize_sample",
     "assign_shards",
