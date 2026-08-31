@@ -166,12 +166,26 @@ def run_eval_pipe(cfg: DictConfig):
             eval_module.model.model, real_class=real_class
         )
 
+    # Where calibration is fitted. Normally the evaluation datamodule's own
+    # calib split -- shard-disjoint from test, so it cannot touch the reported
+    # rows. But when the evaluation set is SHIFTED (So-Fake-OOD), fitting there
+    # would hide the exchangeability violation the condition exists to expose,
+    # so `calib_datamodule=sid_set` supplies in-domain thresholds instead, as
+    # a deployment would have.
+    calib_source = cfg.get("calib_datamodule") or datamodule
+    calib_source_name = type(calib_source).__name__
+    if calib_source is not datamodule:
+        logger.info(
+            f"Calibration source: {calib_source_name} (SEPARATE from the "
+            f"evaluation datamodule {type(datamodule).__name__}). Report which "
+            "calib split the thresholds came from."
+        )
+        calib_source.setup()
+
     # Temperature scaling: fit on the calib split and freeze before scoring.
-    # calib comes from validation shards disjoint from test (see
-    # trustfake.data.manifest), so this cannot touch the reported split.
     if cfg.get("calibrate", True):
         datamodule.setup()
-        calib_loader = getattr(datamodule, "calib_dataloader", None)
+        calib_loader = getattr(calib_source, "calib_dataloader", None)
         if calib_loader is None:
             logger.warning(
                 "Datamodule has no calib_dataloader; skipping temperature "
@@ -189,7 +203,7 @@ def run_eval_pipe(cfg: DictConfig):
     # WP4 selective moderation: fit the policy on the clean calib split (after
     # temperature) and freeze it. calib is shard-disjoint from test.
     if cfg.get("moderate", True):
-        calib_loader = getattr(datamodule, "calib_dataloader", None)
+        calib_loader = getattr(calib_source, "calib_dataloader", None)
         if calib_loader is None:
             logger.warning("No calib_dataloader; skipping moderation fitting.")
         else:

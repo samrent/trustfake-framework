@@ -86,6 +86,7 @@ class Instantiator:
 
     def instantiate_all(self):
         datamodule = self.instantiate_datamodule()
+        calib_datamodule = self.instantiate_calib_datamodule()
         model = self.instantiate_model()
         uncertainty_score = self.instantiate_uncertainty_score()
         optimizer = None
@@ -116,6 +117,7 @@ class Instantiator:
             trainer = self.instantiate_trainer(cb_list)
         return {
             "datamodule": datamodule,
+            "calib_datamodule": calib_datamodule,
             "model": model,
             "optimizer": optimizer if hasattr(self.cfg, "optimizer") else None,
             "scheduler": scheduler if hasattr(self.cfg, "scheduler") else None,
@@ -137,6 +139,26 @@ class Instantiator:
         instances = self.instantiate_all()
         cfg.update(instances)
         return cfg
+
+    def instantiate_calib_datamodule(self):
+        """An optional SEPARATE datamodule to fit calibration on.
+
+        Returns None unless a `calib_datamodule` group is selected, in which
+        case temperature and the moderation policy are fitted on its calib
+        split rather than the evaluation datamodule's. That is the only
+        correct arrangement for a shifted evaluation set: fitting on the
+        shifted data hides the exchangeability violation the condition is
+        there to measure.
+        """
+        cfg = getattr(self.cfg, "calib_datamodule", None)
+        if cfg is None:
+            return None
+        built = instantiate(cfg)
+        factory = built.get("datamodule", None) if built else None
+        if factory is None:
+            return None
+        logger.info("Calibration will be fitted on a separate calib datamodule")
+        return factory()
 
     def instantiate_datamodule(self):
         logger.debug("Instantiating datamodule")

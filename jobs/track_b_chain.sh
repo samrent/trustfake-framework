@@ -110,6 +110,7 @@ step "eval clip_probe : So-Fake-OOD (shift)" eval_ood \
   $PY src/test.py experiment.name="${TAG}_clip_probe" \
     "${CLIP_COMMON[@]}" \
     datamodule=so_fake_ood \
+    calib_datamodule=sid_set \
     datamodule.datamodule.limit_test="${LIMIT_TEST}"
 
 # --- 5. the head-to-head ----------------------------------------------------
@@ -133,6 +134,7 @@ step "eval ${BASELINE_ARM} : So-Fake-OOD" baseline_ood \
   $PY src/test.py experiment.name="${BASELINE_ARM}" \
     "${RESNET_COMMON[@]}" \
     datamodule=so_fake_ood \
+    calib_datamodule=sid_set \
     datamodule.datamodule.limit_test="${LIMIT_TEST}"
 
 say "chain complete -- logs in $LOG"

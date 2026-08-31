@@ -1,0 +1,3 @@
+# No separate calibration source: temperature and the moderation policy are
+# fitted on the EVALUATION datamodule's own calib split. Correct whenever the
+# evaluation data is in-domain (SID-Set), and the default.

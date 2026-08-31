@@ -1,5 +1,9 @@
 defaults:
   - datamodule: sid_set
+  # Optional separate source for temperature + moderation fitting. Use
+  # `calib_datamodule=sid_set` when the evaluation set is SHIFTED, so the
+  # thresholds come from in-domain data as they would at deployment.
+  - calib_datamodule: none
   - model: resnet18
   - loss: ce
   - trainer: standard
