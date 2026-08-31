@@ -1,3 +1,4 @@
+from .binary_fold import REAL_CLASS, BinaryFoldClassifier
 from .clip import (
     CLIPProbeClassifier,
     CLIPZeroShotClassifier,
@@ -18,4 +19,6 @@ __all__ = [
     "build_text_prototypes",
     "clip_zeroshot",
     "clip_probe",
+    "BinaryFoldClassifier",
+    "REAL_CLASS",
 ]
