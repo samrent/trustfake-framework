@@ -1,0 +1,31 @@
+name: clip_vit_b32_zeroshot
+model:
+  _target_: trustfake.models.torch.clip_zeroshot
+  # One name per class, IN LABEL ORDER. SID-Set is (real, synthetic,
+  # tampered); these prompts are a starting point, not a tuned set -- the
+  # zero-shot head IS the confound at this seam, so whatever is used here is
+  # a reported quantity.
+  classnames:
+    - "a real photograph"
+    - "a fully AI-generated image"
+    - "a photograph with an edited region"
+  model_name: ViT-B-32
+  pretrained: laion2b_s34b_b79k
+  templates:
+    - "{}"
+    - "a photo of {}."
+  # null keeps the checkpoint's learned scale (~100), which saturates
+  # max-probability and makes 1-MSP near-degenerate. Clean accuracy is right,
+  # the confidence axis is not: fit a temperature on the calib split
+  # (trustfake.metrics.calibration.fit_temperature) and pass it to the wrapper
+  # before reporting any failure-detection number.
+  logit_scale: null
+  freeze: true
+
+# REQUIRED with this model: set the datamodule's `normalization_layer: null`.
+# A CLIP encoder carries its own preprocessing statistics and applies them
+# inside the model (see trustfake/models/torch/clip.py); the datamodule's
+# ImageNet Normalize on top of that double-normalizes the input, which moves
+# both accuracy and the confidence distribution without raising anything.
+# The L_inf ball is unaffected either way -- attacks still perturb raw [0, 1]
+# pixels -- so this mistake is silent, which is why it is written here.

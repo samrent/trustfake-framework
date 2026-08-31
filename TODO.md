@@ -118,6 +118,46 @@ the first thing a robustness researcher will ask about.
       `1 − MSP`; |ρ| ≥ 0.98 means the "new" uncertainty is the old one
       relabelled).
 
+### The VLM port (seam 1 landed, unmeasured)
+
+`trustfake.models.torch.clip` presents a CLIP encoder as the wrapper contract,
+so the battery runs against it. Nothing has been *run*: the code path is pinned
+by tests with a stub encoder, and no real checkpoint has been through it.
+
+- [ ] **Install and smoke the real checkpoint.** `open_clip_torch` is declared
+      but not in the lock; build `ViT-B-32/laion2b_s34b_b79k`, confirm clean
+      zero-shot accuracy on a labelled transfer set is sane before reading any
+      robustness number off it. A broken prompt set looks exactly like a robust
+      model at chance.
+- [ ] **Fit the temperature, then report it.** At the native `logit_scale` the
+      confidence signal is constant and every failure-detection number is
+      meaningless. Fit on calib, freeze, report T beside Φ — the whole point is
+      that the confidence axis is not readable off an uncalibrated head.
+- [ ] **Specify the gate (slot 3) for a non-forgery task.** `metrics/moderation.py`
+      hardcodes `p_fake = 1 − P(real)` and `failure_detection` takes a
+      `real_class` index. A zero-shot label set has no "real" class, so WP4
+      residual risk is undefined until the abstain-vs-auto decision is
+      re-specified for the transfer task. Until then, report Φ (FD-AUROC) and
+      selective risk only — do **not** report a moderation number.
+- [ ] **The anchor comparison.** Run `QueryConfidence` (gradient-free, the only
+      measurement the validity law trusts) against the zero-shot head and put
+      accuracy-vs-Φ beside the detector's 0.558→0.558 / 0.555→0.0003. Same
+      protocol, same five metrics, different component: that IS the transfer
+      claim, and it is falsifiable — Φ may well survive here, which is a result.
+- [ ] **P2 — encoder propagation (the reason the port exists).** Swap the frozen
+      tower for a FARE/TeCoA-robustified one, hold the head and prompts fixed,
+      re-run. The prediction: downstream confidence-axis robustness rises with
+      *no head retraining*, because encoder robustification flattens the
+      geometry the confidence attack exploits. If it holds, the shared encoder
+      is the fleet-wide control point for the confidence axis too.
+- [ ] **Seam 2, once seam 1 has a number.** Representation-level: confidence
+      from feature density / augmentation self-consistency / ensemble
+      disagreement, which are decoupled from task logits by construction (the
+      σ-seam item above, in its natural habitat). Blocked on a contract that
+      does not assume logits — `CLIPZeroShotClassifier.encode` is the entry
+      point. Note the honest catch: scoring faithfulness needs a correctness
+      label, so a task re-enters through the back door and must be disclosed.
+
 ## 5. Housekeeping
 
 - [ ] Optional: send the reference fixes / structure improvements upstream —

@@ -35,6 +35,47 @@ Also recorded: the SID_Set shards already include a `mask` column (binary
 mask of the manipulated region), so mask-guided crops, area-stratified
 tampered recall and the localization extension need no new download.
 
+**The confidence-axis audit, ported to a CLIP encoder (seam 1).** The attack
+battery and the metric stack were already written against
+`TrustFakeWrapper`'s `x -> (logits, probs, preds, uncertainty)` contract and
+nothing else, so auditing a vision encoder for the same failure mode needed a
+module that satisfies that contract, not a second harness.
+
+- **`trustfake.models.torch.clip`**: `CLIPZeroShotClassifier` — a frozen image
+  tower plus frozen, L2-normalized text prototypes as an `x -> logits` module
+  (`logit_scale * cos(f(x), P)`), dropping into `BaseWrapper` unchanged.
+  Prototypes are a buffer, so a checkpoint round-trips without the text tower;
+  `build_text_prototypes` does prompt ensembling over normalized embeddings;
+  `clip_zeroshot` builds from an `open_clip` checkpoint with the import kept
+  lazy, so the test suite runs without the dependency and without the network.
+- **The transfer is pinned by test, not asserted.** `QueryConfidence` — the
+  gradient-free instrument — runs against the zero-shot head and keeps all
+  three of its guarantees there: no parameter gradient touched, argmax
+  preserved, uncertainty moved in the requested direction, inside the budget.
+  That is the claim "the apparatus is task-agnostic" made falsifiable.
+- **Two silent failure modes are written down as tests.** Double normalization
+  (datamodule `Normalize` on top of the encoder's own) raises nothing and
+  changes every number; CLIP's native `logit_scale` (~100) saturates `1 − MSP`
+  into a constant, so failure detection ranks nothing while accuracy is
+  bit-identical — the confidence axis destroyed by a *configuration*, which is
+  the same lesson as the confidence attack, arriving through the front door.
+
+Encoder parameters are frozen (seam 1 audits a pretrained encoder); a test pins
+that this does not block the input gradients the gradient attacks need.
+
+Smoke on the real `ViT-B-32/laion2b_s34b_b79k` checkpoint (procedural images,
+**not** SID-Set — no dataset number is claimed here): the head builds, prototypes
+come out `(3, 512)` and unit-norm, `logit_scale` is 100.0 as expected, and
+zero-shot semantics are correct end-to-end, which is what says the normalization
+is right. `QueryConfidence` at eps = 8/255, 150 queries, then moves the
+confidence axis on a CLIP encoder with the instrument unchanged: `over` takes
+mean `1 - MSP` from 3.32e-02 to 1.12e-04 (a ~300x collapse), `under` to 1.35e-01,
+both with the argmax preserved on every sample, inside the budget, and touching
+no parameter gradient. Saturation turns out to be input-dependent: the same head
+reads 6.85e-05 on unambiguous inputs and 3.32e-02 (max 0.27) on ambiguous ones,
+so "the native scale saturates" has to be checked against the real distribution
+rather than assumed.
+
 ## TF_03 — 2026-08-26
 
 Three adversarial audits over the TF_02 code, then the fixes. 31 bugs, every
