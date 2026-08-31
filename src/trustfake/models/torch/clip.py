@@ -59,8 +59,10 @@ __all__ = [
     "CLIP_STD",
     "OPENAI_CLIP_LOGIT_SCALE",
     "CLIPZeroShotClassifier",
+    "CLIPProbeClassifier",
     "build_text_prototypes",
     "clip_zeroshot",
+    "clip_probe",
 ]
 
 logger = get_logger("clip")
@@ -241,4 +243,119 @@ def clip_zeroshot(
         prototypes=prototypes.cpu(),
         logit_scale=scale,
         freeze=freeze,
+    )
+
+
+class CLIPProbeClassifier(nn.Module):
+    """A frozen CLIP image tower with a trainable head -- the detector, not
+    the audit target.
+
+    This is a different use of CLIP from :class:`CLIPZeroShotClassifier`,
+    which exists to be *attacked*. Here the encoder is a feature extractor for
+    a forgery detector, in the lineage of Ojha et al. (CVPR 2023): a linear
+    probe on frozen CLIP features generalises across generators far better
+    than a detector trained from scratch, because the backbone was never
+    fitted to one dataset's artefacts. That is the property a SID-Set-trained
+    ResNet lacks, and it is why cross-dataset accuracy collapses.
+
+    **What this trades away.** ViT-B/32 resizes to 224 and patchifies at 32
+    pixels: a heavy low-pass, and the same destruction of local
+    high-frequency evidence that ``input_mode: crop`` exists to prevent. So
+    expect this backbone to be strong on the *synthetic* class (global,
+    semantic artefacts) and weak on *tampered* (seam residue, local
+    re-decoding). ``detection_auroc_tampered`` vs ``detection_auroc_synthetic``
+    measures exactly that split -- read them before adopting it, because a
+    backbone that lifts mean accuracy while dropping tampered recall is a
+    regression dressed as an improvement. ViT-B/16 patchifies finer and is
+    the first thing to try if tampered recall is the loss.
+
+    Args:
+        visual: The image tower, ``(B, 3, H, W) -> (B, D)``.
+        feature_dim: ``D``. ``open_clip`` exposes it as ``visual.output_dim``.
+        num_classes: 3 for SID-Set (real / synthetic / tampered).
+        freeze_backbone: Keep the encoder frozen and train only the head.
+            True is the probe regime -- cheap, and the regime the
+            generalisation result is about. False fine-tunes everything and
+            re-opens the door to fitting one dataset's artefacts.
+        normalize_features: L2-normalise before the head. Standard for a CLIP
+            probe: it puts every sample on the unit sphere so the head learns
+            direction rather than magnitude.
+        mean, std, normalize_input: preprocessing, applied inside the module
+            for the reason given in the module docstring.
+    """
+
+    def __init__(
+        self,
+        visual: nn.Module,
+        feature_dim: int,
+        num_classes: int = 3,
+        freeze_backbone: bool = True,
+        normalize_features: bool = True,
+        normalize_input: bool = True,
+        mean: Sequence[float] = CLIP_MEAN,
+        std: Sequence[float] = CLIP_STD,
+    ):
+        super().__init__()
+        if num_classes < 2:
+            raise ValueError(f"num_classes must be >= 2, got {num_classes}")
+        self.visual = visual
+        self.head = nn.Linear(feature_dim, num_classes)
+        self.normalize_features = normalize_features
+        self.normalize_input = normalize_input
+        self.register_buffer("pixel_mean", torch.tensor(mean).view(1, -1, 1, 1))
+        self.register_buffer("pixel_std", torch.tensor(std).view(1, -1, 1, 1))
+        if freeze_backbone:
+            self.visual.requires_grad_(False)
+        self.frozen_backbone = freeze_backbone
+
+    def encode(self, x: Tensor) -> Tensor:
+        """Features for raw ``[0, 1]`` input.
+
+        Freezing is ``requires_grad_(False)`` on the parameters, NOT a
+        ``no_grad`` region around the backbone. The distinction is
+        load-bearing: ``no_grad`` would also cut the gradient w.r.t. the
+        *input*, and every gradient attack in this repo differentiates the
+        logits w.r.t. the image. A probe wrapped that way would report
+        perfect robustness against PGD while being trivially attackable,
+        which is the exact failure mode this project exists to catch.
+        """
+        if self.normalize_input:
+            x = (x - self.pixel_mean) / self.pixel_std
+        features = self.visual(x).float()
+        return F.normalize(features, dim=-1) if self.normalize_features else features
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.head(self.encode(x))
+
+
+def clip_probe(
+    num_classes: int = 3,
+    model_name: str = "ViT-B-32",
+    pretrained: str = "laion2b_s34b_b79k",
+    freeze_backbone: bool = True,
+    normalize_features: bool = True,
+) -> CLIPProbeClassifier:
+    """Build a probe detector from an `open_clip` checkpoint.
+
+    `open_clip` is imported lazily, as in :func:`clip_zeroshot`, so importing
+    this module stays free and the tests run without the dependency.
+    """
+    import open_clip
+
+    model, _, _ = open_clip.create_model_and_transforms(
+        model_name, pretrained=pretrained
+    )
+    visual = model.visual
+    feature_dim = int(getattr(visual, "output_dim", 512))
+    logger.info(
+        f"clip_probe: {model_name}/{pretrained}, dim={feature_dim}, "
+        f"{num_classes} classes, backbone "
+        f"{'frozen' if freeze_backbone else 'TRAINABLE'}"
+    )
+    return CLIPProbeClassifier(
+        visual=visual,
+        feature_dim=feature_dim,
+        num_classes=num_classes,
+        freeze_backbone=freeze_backbone,
+        normalize_features=normalize_features,
     )

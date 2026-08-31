@@ -1,0 +1,25 @@
+name: clip_vit_b32_probe
+model:
+  _target_: trustfake.models.torch.clip_probe
+  num_classes: 3
+  model_name: ViT-B-32
+  pretrained: laion2b_s34b_b79k
+  # Frozen encoder + trainable linear head -- the regime the cross-dataset
+  # generalisation result (Ojha et al., CVPR 2023) is about: the backbone was
+  # never fitted to one dataset's artefacts, which is precisely what a
+  # SID-Set-trained ResNet does wrong. false fine-tunes everything and
+  # re-opens that door.
+  freeze_backbone: true
+  normalize_features: true
+
+# REQUIRED with this model: datamodule `normalization_layer: null`. The
+# encoder carries its own preprocessing statistics and applies them inside
+# the model; an ImageNet Normalize on top double-normalizes silently.
+#
+# READ BEFORE ADOPTING: ViT-B/32 resizes to 224 and patchifies at 32 px, a
+# heavy low-pass over exactly the local high-frequency evidence the tampered
+# class depends on. Expect strong `detection_auroc_synthetic` and weak
+# `detection_auroc_tampered`. A backbone that lifts mean accuracy while
+# dropping tampered recall is a regression dressed as an improvement -- read
+# the per-modality rows, not the average. ViT-B/16 patchifies finer and is
+# the first thing to try if tampered recall is what is lost.
