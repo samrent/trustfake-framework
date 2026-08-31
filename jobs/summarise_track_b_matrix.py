@@ -16,7 +16,6 @@ import csv
 import os
 import re
 import sys
-from collections import defaultdict
 
 # accuracy is the PREDICTION axis; fd_auroc is the CONFIDENCE axis. An attack
 # that leaves the first bit-identical while moving the second is the failure
@@ -116,9 +115,7 @@ def main() -> None:
                 m = cells.get((model, dataset, cond))
                 if m is None:
                     continue
-                vals = " | ".join(
-                    f"{m[k]:.4f}" if k in m else "—" for k, _ in COLUMNS
-                )
+                vals = " | ".join(f"{m[k]:.4f}" if k in m else "—" for k, _ in COLUMNS)
                 print(f"| {model} | {cond} | {vals} |")
 
     if missing:
@@ -128,7 +125,7 @@ def main() -> None:
 
     # The single comparison the array exists to make.
     print("\n## Confidence axis: does accuracy hold while Phi moves?\n")
-    print("| model | dataset | acc clean -> query_overconf | Phi clean -> query_overconf |")
+    print("| model | dataset | acc clean -> attacked | Phi clean -> attacked |")
     print("|---|---|---|---|")
     for model in ("clip_probe", "resnet"):
         for dataset in DATASETS:
@@ -136,10 +133,15 @@ def main() -> None:
             a = cells.get((model, dataset, "query_overconf"))
             if not c or not a:
                 continue
-            def fmt(key):
-                if key not in c or key not in a:
+
+            # c/a passed explicitly rather than closed over: a closure over a
+            # loop variable is a late-binding bug waiting for someone to move
+            # the call out of the iteration.
+            def fmt(key: str, clean=c, attacked=a) -> str:
+                if key not in clean or key not in attacked:
                     return "—"
-                return f"{c[key]:.4f} -> {a[key]:.4f}"
+                return f"{clean[key]:.4f} -> {attacked[key]:.4f}"
+
             print(f"| {model} | {dataset} | {fmt('accuracy')} | {fmt('fd_auroc')} |")
 
 
