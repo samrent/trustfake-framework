@@ -193,6 +193,11 @@ class SoFakeOODDataModule(L.LightningDataModule):
             "parquet", data_files=[str(p) for p in self.shards], split="train"
         )
         if self.limit_test is not None:
+            # Shuffle before capping, for the reason fake_clue.assign_groups
+            # documents: rows arrive grouped, so a raw prefix is not a sample
+            # of the same population. Seeded by manifest_seed, so the capped
+            # set is a protocol constant rather than an artefact of shard order.
+            dataset = dataset.shuffle(seed=self.manifest_seed)
             dataset = dataset.select(range(min(self.limit_test, len(dataset))))
         self._test_ds = SoFakeOODTorchDataset(dataset, self._transform())
 

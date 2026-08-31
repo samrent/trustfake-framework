@@ -218,7 +218,22 @@ def assign_groups(
         f"calib {len(calib)} / test {len(test)} (requested calib "
         f"{calib_fraction:.2f}, realised {len(calib) / max(len(records), 1):.2f})"
     )
-    return sorted(calib), sorted(test)
+
+    # Shuffle WITHIN each role, deterministically. Rows arrive in json order,
+    # which is clustered by category (all the deepfake rows, then all the
+    # satellite rows...), so returning them sorted makes `limit_test` take a
+    # class-degenerate prefix -- measured on the real split, the first 64 test
+    # rows were a single class, which sends every AUROC to NaN. `limit_test`
+    # is documented as a prefix whose capped set is nested inside the full one
+    # and describes the same population, and that holds only if the order is
+    # random. Shuffling changes order, never membership, so the identity
+    # firewall is untouched.
+    def _shuffled(idx: list[int], salt: int) -> list[int]:
+        gen = torch.Generator().manual_seed(seed + salt)
+        order = torch.randperm(len(idx), generator=gen).tolist()
+        return [idx[i] for i in order]
+
+    return _shuffled(sorted(calib), 1), _shuffled(sorted(test), 2)
 
 
 class FakeClueTorchDataset(TorchDataset[tuple[torch.Tensor, torch.Tensor]]):

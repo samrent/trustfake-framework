@@ -247,3 +247,22 @@ def test_indivisible_group_warns_rather_than_silently_skewing(caplog):
         calib, test = assign_groups(records, 0.3, seed=0)
 
     assert set(calib).isdisjoint(test), "the firewall holds even when unbalanced"
+
+
+def test_capped_test_split_is_not_class_degenerate():
+    """`limit_test` takes a prefix, and the repo documents that as a nested
+    sample of the same population. FakeClue's json is clustered by category,
+    so an unshuffled prefix is single-class -- measured on the real split, the
+    first 64 rows were all one label, which sends every AUROC to NaN."""
+    records = [
+        {"image": f"catA/fake/{i}.png", "label": FAKE_CLUE_FAKE_ID} for i in range(200)
+    ]
+    records += [
+        {"image": f"catB/real/s{i}/x.png", "label": FAKE_CLUE_REAL_ID}
+        for i in range(200)
+    ]
+    _, test = assign_groups(records, 0.3, seed=0)
+
+    prefix = test[:60]
+    labels = {records[i]["label"] for i in prefix}
+    assert len(labels) == 2, "a capped prefix must still contain both classes"
