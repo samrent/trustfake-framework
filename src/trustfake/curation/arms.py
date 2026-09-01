@@ -14,13 +14,16 @@ left to the executor, decided BEFORE any fit and recorded here:
   * C1 hygiene = within-pool near-duplicate removal (keep-first at the G2
     threshold) + decode-clean rows only. Label-map corrections would land
     here too; G4 found none for the ingested shortlist.
-  * C2 matching bins: format x JPEG-quality band x min-side band x
-    squareness x resample direction (the route-to-224 signature). Within
-    each environment, every class present is subsampled to the per-bin
-    minimum across classes, seeded. Single-class environments pass through
-    untouched -- there is no within-environment shortcut to remove when
-    the environment has one class, and dropping them would change the
-    environment mix, which is C4's variable, not C2's.
+  * C2 is PROPENSITY-STRATIFIED matching (see `_match_marginals`): per
+    environment, the G1 nuisance classifier is fitted out-of-fold, rows
+    are stratified into fixed-width propensity bins, and class counts are
+    equalized within strata. Exact joint-cell and per-axis schemes were
+    measured on the smoke pool first and retained 3% / 0.5% -- the
+    class-conditional nuisance distributions barely overlap, which is
+    itself a finding about naive pooling. Single-class environments pass
+    through untouched: no within-environment shortcut exists with one
+    class, and dropping them would change the environment mix, which is
+    C4's variable, not C2's.
   * C4/C5 build on the STRICT-DROP mapping (C3a), the pre-registered tie
     default for H2. With zero unmappable rows in the ingested shortlist
     C3a == C3b == C2 structurally; the machinery stays for reuse.
@@ -224,6 +227,12 @@ def _match_marginals(pool: pd.DataFrame, seed: int) -> pd.DataFrame:
             if env_rows["label_bin"].nunique() > 1
             else (env_rows["label3"] == 2).astype(int)
         ).to_numpy()
+        spans = np.nanmax(x, axis=0) - np.nanmin(x, axis=0)
+        x = x[:, ~np.isclose(spans, 0) | np.isnan(spans)]
+        if x.shape[1] == 0:
+            # headers carry nothing here -- nothing to match on
+            kept_positions.append(env_rows.index.to_numpy())
+            continue
         propensity = cross_val_predict(
             HistGradientBoostingClassifier(random_state=seed),
             x,
@@ -231,10 +240,10 @@ def _match_marginals(pool: pd.DataFrame, seed: int) -> pd.DataFrame:
             cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=seed),
             method="predict_proba",
         )[:, 1]
-        edges = np.unique(np.quantile(propensity, np.linspace(0, 1, 11)))
-        strata = np.digitize(propensity, edges[1:-1]) if edges.size > 2 else (
-            np.zeros(len(env_rows), dtype=int)
-        )
+        # Fixed-width strata: quantile deciles collapse when the propensity
+        # is bimodal (near-perfectly separable classes), which is exactly
+        # the regime this arm exists to interrogate.
+        strata = np.digitize(propensity, np.linspace(0.1, 0.9, 9))
         surviving: list[np.ndarray] = []
         frame = env_rows.assign(stratum=strata)
         for _stratum, stratum_rows in frame.groupby("stratum"):

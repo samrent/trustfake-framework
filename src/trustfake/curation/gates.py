@@ -82,9 +82,20 @@ def g1_metadata_auroc(index: pd.DataFrame, seed: int = 0) -> dict[str, float]:
                 np.isnan(q).astype(np.float64),
             ]
         )
+        # sklearn's HGB binning crashes on a constant feature (numpy
+        # sliding_window_view with a single distinct value) -- drop them;
+        # a fully-constant matrix means headers carry nothing: AUROC 0.5.
+        import numpy as _np
+        spans = _np.nanmax(x, axis=0) - _np.nanmin(x, axis=0)
+        varying = x[:, ~_np.isclose(spans, 0) | _np.isnan(spans)]
+        if varying.shape[1] == 0:
+            results[str(env)] = 0.5
+            continue
         model = HistGradientBoostingClassifier(random_state=seed)
         folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-        probabilities = cross_val_predict(model, x, y, cv=folds, method="predict_proba")
+        probabilities = cross_val_predict(
+            model, varying, y, cv=folds, method="predict_proba"
+        )
         results[str(env)] = float(roc_auc_score(y, probabilities[:, 1]))
     return results
 
