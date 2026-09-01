@@ -226,38 +226,44 @@ def _k_center(
     return pool.loc[positions]
 
 
-def build_arm(
-    arm: str,
+def prepare_base(
     pool: pd.DataFrame,
     features: np.ndarray,
     leg_features: np.ndarray,
-    seed: int,
     device: str = "cuda",
-) -> pd.DataFrame:
-    """The arm's index rows (a subset of `pool`), by the ladder above.
+) -> dict[str, pd.DataFrame]:
+    """The seed-independent prefix of the ladder, computed once.
 
     `pool` must be the FULL training-candidate pool (leg-reserved uids and
     eval-only datasets already excluded upstream), row-aligned with
     `features`; `leg_features` is the concatenated L1-L4 feature matrix.
     """
-    if arm not in ARM_NAMES:
-        raise ValueError(f"Unknown arm '{arm}'. Arms: {ARM_NAMES}")
-
     pool = pool.reset_index(drop=True)
-    base = _drop_leg_leakage(pool, features, leg_features, device)
-    base = base.copy()
+    base = _drop_leg_leakage(pool, features, leg_features, device).copy()
     # Naive mapping: unmappable binary fakes fold to synthetic (C0-C2).
     naive = base.assign(
         label3=np.where(base["label3"] == -1, 1, base["label3"]),
         binary_only=False,
     )
-    if arm == "C0":
-        return naive
-
     deduped_rows = _dedup_within(
         base, features[base.index.to_numpy()], device
     ).index.to_numpy()
-    c1 = naive.loc[deduped_rows]
+    return {"base": base, "c0": naive, "c1": naive.loc[deduped_rows]}
+
+
+def build_arm(
+    arm: str,
+    prepared: dict[str, pd.DataFrame],
+    features: np.ndarray,
+    seed: int,
+    device: str = "cuda",
+) -> pd.DataFrame:
+    """One arm's index rows, from `prepare_base`'s output plus the seed."""
+    if arm not in ARM_NAMES:
+        raise ValueError(f"Unknown arm '{arm}'. Arms: {ARM_NAMES}")
+    base, naive, c1 = prepared["base"], prepared["c0"], prepared["c1"]
+    if arm == "C0":
+        return naive
     if arm == "C1":
         return c1
 

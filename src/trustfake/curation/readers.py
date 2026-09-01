@@ -197,7 +197,13 @@ def _iter_audits(data_dir: Path) -> Iterator[tuple[str, Rows]]:
     rows: Rows = []
     for record in wanted.itertuples(index=False):
         authentic = record.manipulation_type == "Authentic"
-        relative = record.original_path if authentic else record.file_name
+        # The zips use {split}/{split}_{subset}/{method}/{kind}/{id}.jpg, not
+        # the metadata's file_name -- verified against train.zip 2026-09-01.
+        kind = "original" if authentic else "manipulated"
+        relative = (
+            f"{record.training}/{record.training}_{record.subset.lower()}/"
+            f"{record.manipulation_type}/{kind}/{record.id}.jpg"
+        )
         path = data_dir / relative
         rows.append(
             {

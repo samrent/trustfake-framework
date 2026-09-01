@@ -35,7 +35,32 @@ def main() -> None:
     spot.add_argument("--out", default=None, help="default: $OUTPUT_PATH/tb_e3/g4/<dataset>.png")
     spot.add_argument("--seed", type=int, default=0)
 
+    for name, description in [
+        ("freeze-legs", "runbook step 4: write the frozen-legs manifest"),
+        ("ladder", "pool -> gates -> arms -> 48 fits -> results table"),
+    ]:
+        command = sub.add_parser(name, help=description)
+        command.add_argument("--features", default=None)
+        command.add_argument("--out", default=None)
+        command.add_argument("--device", default="cuda")
+
     args = parser.parse_args()
+    if args.command in ("freeze-legs", "ladder"):
+        from trustfake.curation import ladder
+
+        features_root = args.features or os.path.join(
+            os.environ["OUTPUT_PATH"], "tb_e3", "features"
+        )
+        out_root = args.out or os.environ["OUTPUT_PATH"]
+        if args.command == "freeze-legs":
+            ladder.freeze_all_legs(features_root, out_root)
+            return
+        pool, pool_features = ladder.build_pool(features_root, out_root)
+        ladder.run_gates(pool, out_root)
+        ladder.run_fits(pool, pool_features, features_root, out_root, device=args.device)
+        table = ladder.collate(out_root)
+        print(table.groupby(["arm", "size", "leg"])["detection_auroc"].mean().unstack())
+        return
     if args.command == "spotcheck":
         from trustfake.curation.spotcheck import make_contact_sheet
 
