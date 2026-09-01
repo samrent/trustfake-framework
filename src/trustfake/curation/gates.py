@@ -87,7 +87,7 @@ def g1_metadata_auroc(index: pd.DataFrame, seed: int = 0) -> dict[str, float]:
         # a fully-constant matrix means headers carry nothing: AUROC 0.5.
         import numpy as _np
         spans = _np.nanmax(x, axis=0) - _np.nanmin(x, axis=0)
-        varying = x[:, ~_np.isclose(spans, 0) | _np.isnan(spans)]
+        varying = x[:, _np.isfinite(spans) & (spans > 0)]
         if varying.shape[1] == 0:
             results[str(env)] = 0.5
             continue

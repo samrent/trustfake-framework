@@ -228,7 +228,7 @@ def _match_marginals(pool: pd.DataFrame, seed: int) -> pd.DataFrame:
             else (env_rows["label3"] == 2).astype(int)
         ).to_numpy()
         spans = np.nanmax(x, axis=0) - np.nanmin(x, axis=0)
-        x = x[:, ~np.isclose(spans, 0) | np.isnan(spans)]
+        x = x[:, np.isfinite(spans) & (spans > 0)]
         if x.shape[1] == 0:
             # headers carry nothing here -- nothing to match on
             kept_positions.append(env_rows.index.to_numpy())
