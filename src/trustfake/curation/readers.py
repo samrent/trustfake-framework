@@ -186,7 +186,9 @@ def _iter_audits(data_dir: Path) -> Iterator[tuple[str, Rows]]:
     other test-only methods are not embedded (nothing in the ladder reads
     them). `generator` carries manipulation_type; Authentic rows are reals.
     """
-    table = pq.read_table(data_dir / "data" / "train-00000-of-00001.parquet").to_pandas()
+    table = pq.read_table(
+        data_dir / "data" / "train-00000-of-00001.parquet"
+    ).to_pandas()
     wanted = table[
         table["training"].isin(["train", "val"])
         | (
@@ -220,7 +222,10 @@ def _iter_audits(data_dir: Path) -> Iterator[tuple[str, Rows]]:
     rows.sort(key=lambda r: r["uid"])
     missing = [r for r in rows if not Path(r["path"]).exists()]
     if missing:
-        msg = f"audits: {len(missing)} of {len(rows)} files missing (e.g. {missing[0]['path']}) -- extract the zips first"
+        msg = (
+            f"audits: {len(missing)} of {len(rows)} files missing "
+            f"(e.g. {missing[0]['path']}) -- extract the zips first"
+        )
         logger.error(msg)
         raise FileNotFoundError(msg)
     yield from _chunks(rows, "audits")
@@ -234,7 +239,8 @@ def _iter_synthbuster(data_dir: Path) -> Iterator[tuple[str, Rows]]:
     """
     rows: Rows = []
     for image in sorted(data_dir.rglob("*")):
-        if image.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"}:
+        suffixes = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"}
+        if image.suffix.lower() not in suffixes:
             continue
         generator = image.parent.name
         rows.append(
@@ -248,7 +254,9 @@ def _iter_synthbuster(data_dir: Path) -> Iterator[tuple[str, Rows]]:
             }
         )
     if not rows:
-        raise FileNotFoundError(f"synthbuster: no images under {data_dir} -- extract first")
+        raise FileNotFoundError(
+            f"synthbuster: no images under {data_dir} -- extract first"
+        )
     yield from _chunks(rows, "synthbuster")
 
 
@@ -266,7 +274,8 @@ def _iter_vision(data_dir: Path) -> Iterator[tuple[str, Rows]]:
         if "/images/" not in str(image):
             continue
         collection = image.parent.name
-        device = image.parts[image.parts.index("images") - 1] if "images" in image.parts else "unknown"
+        parts = image.parts
+        device = parts[parts.index("images") - 1] if "images" in parts else "unknown"
         rows.append(
             {
                 "uid": f"vision:all:{device}/{collection}/{image.name}",
@@ -325,8 +334,9 @@ def _iter_imd2020(data_dir: Path) -> Iterator[tuple[str, Rows]]:
     gan_inpaint/: pre-diffusion GAN inpaintings (tampered). Masks skipped.
     """
     rows: Rows = []
+    image_suffixes = {".jpg", ".jpeg", ".png"}
     for image in sorted((data_dir / "real_life").rglob("*")):
-        if image.suffix.lower() not in {".jpg", ".jpeg", ".png"} or "mask" in image.name:
+        if image.suffix.lower() not in image_suffixes or "mask" in image.name:
             continue
         real = image.stem.endswith("_orig")
         rows.append(
@@ -344,7 +354,10 @@ def _iter_imd2020(data_dir: Path) -> Iterator[tuple[str, Rows]]:
             continue
         rows.append(
             {
-                "uid": f"imd2020:camera_real:{image.parent.parent.name}/{image.parent.name}/{image.name}",
+                "uid": (
+                    f"imd2020:camera_real:{image.parent.parent.name}/"
+                    f"{image.parent.name}/{image.name}"
+                ),
                 "path": str(image),
                 "label3": 0,
                 "label_bin": 0,
@@ -355,7 +368,7 @@ def _iter_imd2020(data_dir: Path) -> Iterator[tuple[str, Rows]]:
     gan_root = data_dir / "gan_inpaint"
     if gan_root.exists():
         for image in sorted(gan_root.rglob("*")):
-            if image.suffix.lower() not in {".jpg", ".jpeg", ".png"} or "mask" in image.name:
+            if image.suffix.lower() not in image_suffixes or "mask" in image.name:
                 continue
             rows.append(
                 {

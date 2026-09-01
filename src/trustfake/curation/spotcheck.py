@@ -73,7 +73,8 @@ def make_contact_sheet(
         x = (position % COLUMNS) * TILE
         y = (position // COLUMNS) * (TILE + 18)
         sheet.paste(tile, (x, y))
-        caption = f"{LABEL_NAMES[row['label3']]}  {str(row.get('generator') or '')[:24]}"
+        generator = str(row.get("generator") or "")[:24]
+        caption = f"{LABEL_NAMES[row['label3']]}  {generator}"
         draw.text((x + 2, y + TILE + 2), caption, fill="black")
 
     out_file = Path(out_file)

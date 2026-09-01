@@ -23,7 +23,9 @@ def main() -> None:
     embed = sub.add_parser("embed", help="embed one dataset into the feature cache")
     embed.add_argument("--dataset", required=True)
     embed.add_argument("--data-dir", default=None, help="default: $DATA_PATH/<dataset>")
-    embed.add_argument("--out", default=None, help="default: $OUTPUT_PATH/tb_e3/features")
+    embed.add_argument(
+        "--out", default=None, help="default: $OUTPUT_PATH/tb_e3/features"
+    )
     embed.add_argument("--batch-size", type=int, default=128)
     embed.add_argument("--num-workers", type=int, default=6)
     embed.add_argument("--limit-shards", type=int, default=None)
@@ -32,7 +34,9 @@ def main() -> None:
     spot = sub.add_parser("spotcheck", help="G4: render a 20-image label contact sheet")
     spot.add_argument("--dataset", required=True)
     spot.add_argument("--data-dir", default=None)
-    spot.add_argument("--out", default=None, help="default: $OUTPUT_PATH/tb_e3/g4/<dataset>.png")
+    spot.add_argument(
+        "--out", default=None, help="default: $OUTPUT_PATH/tb_e3/g4/<dataset>.png"
+    )
     spot.add_argument("--seed", type=int, default=0)
 
     for name, description in [
@@ -57,7 +61,9 @@ def main() -> None:
             return
         pool, pool_features = ladder.build_pool(features_root, out_root)
         ladder.run_gates(pool, out_root)
-        ladder.run_fits(pool, pool_features, features_root, out_root, device=args.device)
+        ladder.run_fits(
+            pool, pool_features, features_root, out_root, device=args.device
+        )
         table = ladder.collate(out_root)
         print(table.groupby(["arm", "size", "leg"])["detection_auroc"].mean().unstack())
         return
@@ -68,7 +74,9 @@ def main() -> None:
         out = args.out or os.path.join(
             os.environ["OUTPUT_PATH"], "tb_e3", "g4", f"{args.dataset}.png"
         )
-        make_contact_sheet(args.dataset, data_dir=data_dir, out_file=out, seed=args.seed)
+        make_contact_sheet(
+            args.dataset, data_dir=data_dir, out_file=out, seed=args.seed
+        )
         return
     if args.command == "embed":
         data_dir = args.data_dir or os.path.join(os.environ["DATA_PATH"], args.dataset)

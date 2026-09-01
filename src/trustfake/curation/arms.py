@@ -59,7 +59,9 @@ def nuisance_bins(index: pd.DataFrame) -> pd.Series:
     """
     q = index["jpeg_q"]
     q_band = pd.cut(
-        q, bins=[0, 69, 79, 89, 94, 99, 100], labels=["<70", "70s", "80s", "90-94", "95-99", "100"]
+        q,
+        bins=[0, 69, 79, 89, 94, 99, 100],
+        labels=["<70", "70s", "80s", "90-94", "95-99", "100"],
     ).astype("string")
     q_band = q_band.fillna("noq")
     min_side = index[["width", "height"]].min(axis=1)
@@ -146,13 +148,13 @@ def _match_marginals(pool: pd.DataFrame, seed: int) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     bins = nuisance_bins(pool)
     kept_positions: list[np.ndarray] = []
-    for env, env_rows in pool.groupby("dataset"):
+    for _env, env_rows in pool.groupby("dataset"):
         classes = env_rows["label3"].unique()
         if len(classes) < 2:
             kept_positions.append(env_rows.index.to_numpy())
             continue
         env_bins = bins.loc[env_rows.index]
-        for bin_key, bin_rows in env_rows.groupby(env_bins):
+        for _bin_key, bin_rows in env_rows.groupby(env_bins):
             counts = bin_rows["label3"].value_counts()
             quota = int(counts.reindex(classes).fillna(0).min())
             if quota == 0:

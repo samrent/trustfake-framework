@@ -28,7 +28,7 @@ import hashlib
 import io
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -82,7 +82,9 @@ class _RowsDataset(Dataset):
         row = self.rows[index]
         try:
             source = (
-                io.BytesIO(row["image"]) if row.get("image") is not None else row["path"]
+                io.BytesIO(row["image"])
+                if row.get("image") is not None
+                else row["path"]
             )
             with Image.open(source) as pil:
                 measured = {
@@ -112,7 +114,9 @@ def _load_encoder(device: torch.device):
     import open_clip
     from torchvision import transforms
 
-    model, _, _ = open_clip.create_model_and_transforms(MODEL_NAME, pretrained=PRETRAINED)
+    model, _, _ = open_clip.create_model_and_transforms(
+        MODEL_NAME, pretrained=PRETRAINED
+    )
     visual = model.visual.to(device).eval()
     visual.requires_grad_(False)
     transform = transforms.Compose(
@@ -126,7 +130,12 @@ def _load_encoder(device: torch.device):
     return visual, transform, mean, std
 
 
-def _index_table(rows: list[dict[str, Any]], metas: dict[int, dict[str, Any]], dataset: str, shard: str) -> pa.Table:
+def _index_table(
+    rows: list[dict[str, Any]],
+    metas: dict[int, dict[str, Any]],
+    dataset: str,
+    shard: str,
+) -> pa.Table:
     """Row-aligned index for the embedded (non-failed) rows, in cache order."""
     columns: dict[str, list[Any]] = {
         "uid": [],
@@ -243,7 +252,7 @@ def embed_dataset(
         manifest["shards"][shard_name] = {
             "n_rows": len(order),
             "n_failed": failures,
-            "written": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "written": datetime.now(UTC).isoformat(timespec="seconds"),
         }
         manifest_path.write_text(json.dumps(manifest, indent=2))
         logger.info(

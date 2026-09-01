@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import os
 
-import numpy as np
 import pandas as pd
 
 from trustfake.curation.cacheview import load_cache
@@ -64,7 +63,8 @@ def main() -> None:
         for shard in assignment["test"]
     ]
     test_prefix = pd.concat(test_frames).head(1000)
-    print(f"test prefix: {len(test_prefix)} rows from {test_prefix['shard'].nunique()} shard(s)")
+    n_shards = test_prefix["shard"].nunique()
+    print(f"test prefix: {len(test_prefix)} rows from {n_shards} shard(s)")
 
     result = fit_probe(
         features[fit_rows["cache_row"].to_numpy()],
@@ -83,7 +83,8 @@ def main() -> None:
         print(f"{key:28s} {value:8.4f} {reference:8.4f} {value - reference:+8.4f}")
     print(f"\nbest epoch {result['best_epoch']}, val f1 {result['val_f1']:.4f}")
     worst = max(abs(metrics[k] - v) for k, v in REFERENCE.items())
-    print(f"max |delta| = {worst:.4f} -> {'OK (within 0.02)' if worst <= 0.02 else 'INVESTIGATE'}")
+    verdict = "OK (within 0.02)" if worst <= 0.02 else "INVESTIGATE"
+    print(f"max |delta| = {worst:.4f} -> {verdict}")
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ and say so in the docs.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -85,21 +85,34 @@ def freeze_legs(
     }
     calib = sid_index.loc[roles == "calib", ["uid", "label3"]]
     for name, frame in {**legs, "calib": calib}.items():
-        pq.write_table(pa.Table.from_pandas(frame.reset_index(drop=True)), out / f"{name}.parquet")
+        pq.write_table(
+            pa.Table.from_pandas(frame.reset_index(drop=True)),
+            out / f"{name}.parquet",
+        )
 
     manifest = {
-        "frozen_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "frozen_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "L1": {
-            "definition": f"SID-Set test role, profile '{SID_PROFILE}', manifest_seed {DEFAULT_MANIFEST_SEED}",
+            "definition": (
+                f"SID-Set test role, profile '{SID_PROFILE}', "
+                f"manifest_seed {DEFAULT_MANIFEST_SEED}"
+            ),
             "n": int(len(legs["L1"])),
         },
-        "L2": {"definition": "So-Fake-OOD, all cached shards", "n": int(len(legs["L2"]))},
+        "L2": {
+            "definition": "So-Fake-OOD, all cached shards",
+            "n": int(len(legs["L2"])),
+        },
         "L3": {**l3_choice, "n": int(len(legs["L3"]))},
         "L4": {**l4_choice, "n": int(len(legs["L4"]))},
-        "calib": {"definition": "SID-Set calib role (rides along, never reported)", "n": int(len(calib))},
+        "calib": {
+            "definition": "SID-Set calib role (rides along, never reported)",
+            "n": int(len(calib)),
+        },
     }
     manifest_file.write_text(json.dumps(manifest, indent=2))
-    logger.info(f"legs frozen: { {k: v['n'] for k, v in manifest.items() if isinstance(v, dict)} }")
+    counts = {k: v["n"] for k, v in manifest.items() if isinstance(v, dict)}
+    logger.info(f"legs frozen: {counts}")
     return manifest_file
 
 

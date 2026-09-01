@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -306,7 +306,7 @@ def run_fits(
                     "size": size,
                     "seed": seed,
                     "n_rows": int(len(rows)),
-                    "fitted_at": datetime.now(timezone.utc).isoformat(
+                    "fitted_at": datetime.now(UTC).isoformat(
                         timespec="seconds"
                     ),
                     "val_f1": result["val_f1"],

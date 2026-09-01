@@ -22,7 +22,9 @@ logger = get_logger("curation.cache")
 __all__ = ["load_cache", "gather_features"]
 
 
-def load_cache(features_root: str | Path, dataset: str) -> tuple[pd.DataFrame, np.ndarray]:
+def load_cache(
+    features_root: str | Path, dataset: str
+) -> tuple[pd.DataFrame, np.ndarray]:
     """Load one dataset's full cache.
 
     Returns:
@@ -43,7 +45,10 @@ def load_cache(features_root: str | Path, dataset: str) -> tuple[pd.DataFrame, n
         table = pq.read_table(index_file).to_pandas()
         block = np.load(feature_file)
         if len(table) != block.shape[0]:
-            msg = f"Cache misalignment in {dataset}/{stem}: {len(table)} index rows vs {block.shape[0]} feature rows"
+            msg = (
+                f"Cache misalignment in {dataset}/{stem}: {len(table)} index "
+                f"rows vs {block.shape[0]} feature rows"
+            )
             logger.error(msg)
             raise ValueError(msg)
         frames.append(table)

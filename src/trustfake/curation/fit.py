@@ -128,9 +128,12 @@ def fit_probe(
                 if (~b).any():
                     loss = loss + F.cross_entropy(logits[~b], y[~b])
                 if b.any():
-                    p_real = torch.softmax(logits[b], dim=-1)[:, 0].clamp(1e-7, 1 - 1e-7)
+                    p_real = torch.softmax(logits[b], dim=-1)[:, 0]
+                    p_real = p_real.clamp(1e-7, 1 - 1e-7)
                     # binary-only rows are all fakes of unknown modality
-                    loss = loss + F.binary_cross_entropy(1 - p_real, torch.ones_like(p_real))
+                    loss = loss + F.binary_cross_entropy(
+                        1 - p_real, torch.ones_like(p_real)
+                    )
             else:
                 loss = F.cross_entropy(logits, y)
             optimizer.zero_grad()
@@ -146,7 +149,10 @@ def fit_probe(
             best = {
                 "f1": f1,
                 "epoch": epoch,
-                "state": {k: v.detach().cpu().clone() for k, v in head.state_dict().items()},
+                "state": {
+                    k: v.detach().cpu().clone()
+                    for k, v in head.state_dict().items()
+                },
             }
 
     logger.info(
@@ -202,7 +208,11 @@ def evaluate_probe(
 
     return {
         "n": int(y.size),
-        "accuracy": float(np.nanmean([recalls[f"recall_{CLASS_NAMES[c]}"] for c in range(num_classes)])),
+        "accuracy": float(
+            np.nanmean(
+                [recalls[f"recall_{CLASS_NAMES[c]}"] for c in range(num_classes)]
+            )
+        ),
         "accuracy_top1": float((preds == y).mean()),
         "f1_score": _macro_f1(preds, y, num_classes),
         "detection_auroc": _auroc(p_fake, fake),

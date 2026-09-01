@@ -54,6 +54,8 @@ def estimate_jpeg_quality(quantization: dict[int, list[int]] | None) -> int | No
     qualities = np.arange(1, 101, dtype=np.float64)
     scales = np.where(qualities < 50, 5000.0 / qualities, 200.0 - 2.0 * qualities)
     # (100, 64): reference table under every quality's scale, libjpeg rounding.
-    tables = np.clip(np.floor((_IJG_LUMA[None] * scales[:, None] + 50.0) / 100.0), 1, 255)
+    tables = np.clip(
+        np.floor((_IJG_LUMA[None] * scales[:, None] + 50.0) / 100.0), 1, 255
+    )
     distances = np.abs(tables - observed[None]).sum(axis=1)
     return int(qualities[int(np.argmin(distances))])
