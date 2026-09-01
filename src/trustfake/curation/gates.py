@@ -69,7 +69,8 @@ def g1_metadata_auroc(index: pd.DataFrame, seed: int = 0) -> dict[str, float]:
             continue
         w = group["width"].to_numpy(dtype=np.float64)
         h = group["height"].to_numpy(dtype=np.float64)
-        q = group["jpeg_q"].to_numpy(dtype=np.float64)
+        # object dtype with None off the parquet round-trip -> real NaN
+        q = pd.to_numeric(group["jpeg_q"], errors="coerce").to_numpy(dtype=np.float64)
         x = np.column_stack(
             [
                 w,

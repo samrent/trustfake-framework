@@ -57,7 +57,9 @@ def nuisance_bins(index: pd.DataFrame) -> pd.Series:
     within, and every axis here is one a headers-only classifier (G1) or
     the resize path could read.
     """
-    q = index["jpeg_q"]
+    # jpeg_q round-trips from parquet as object dtype with None for
+    # non-JPEGs; pd.cut needs real NaN floats.
+    q = pd.to_numeric(index["jpeg_q"], errors="coerce")
     q_band = pd.cut(
         q,
         bins=[0, 69, 79, 89, 94, 99, 100],
