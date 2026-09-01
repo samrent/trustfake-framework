@@ -327,7 +327,11 @@ def _iter_tgif(data_dir: Path) -> Iterator[tuple[str, Rows]]:
     rows: Rows = []
     for image in sorted(extracted.rglob("*.png")):
         relative = image.relative_to(extracted)
-        if len(relative.parts) < 4 or "_mask_" in image.name:
+        # Forgery FILENAMES embed the mask name that produced them
+        # (`..._mask_segm.png_ps_0.png` IS a forged image); mask archives
+        # were never fetched, so no name filter -- the first embed filtered
+        # on 'mask' and silently kept only the originals.
+        if len(relative.parts) < 4:
             continue
         tool, split, category = relative.parts[0], relative.parts[1], relative.parts[2]
         real = tool == "orig"
