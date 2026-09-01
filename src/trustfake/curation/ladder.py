@@ -310,11 +310,19 @@ def run_fits(
                     leg: evaluate_probe(result["state"], f, y, device=device)
                     for leg, (f, y) in evaluation.items()
                 }
+                # Weights land BEFORE the JSON marker: a marker must imply
+                # the head exists on disk (1,539 params; the fits are cheap
+                # but the ladder's heads are the deliverable models).
+                import torch
+
+                weights_file = out / "fits" / f"{arm}_{size}_s{seed}.pt"
+                torch.save(result["state"], weights_file)
                 record = {
                     "arm": arm,
                     "size": size,
                     "seed": seed,
                     "n_rows": int(len(rows)),
+                    "weights": weights_file.name,
                     "fitted_at": datetime.now(UTC).isoformat(
                         timespec="seconds"
                     ),

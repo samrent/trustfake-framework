@@ -138,21 +138,27 @@ def _iter_community_forensics_small(data_dir: Path) -> Iterator[tuple[str, Rows]
             ],
         )
         rows: Rows = []
-        for name, image, model, real_source, subset, split, label, arch in zip(
-            table["image_name"].to_pylist(),
-            table["image_data"].to_pylist(),
-            table["model_name"].to_pylist(),
-            table["real_source"].to_pylist(),
-            table["subset"].to_pylist(),
-            table["split"].to_pylist(),
-            table["label"].to_pylist(),
-            table["architecture"].to_pylist(),
-            strict=True,
+        stem = shard.name.removesuffix(".parquet")
+        for position, (name, image, model, real_source, subset, split, label, arch) in enumerate(
+            zip(
+                table["image_name"].to_pylist(),
+                table["image_data"].to_pylist(),
+                table["model_name"].to_pylist(),
+                table["real_source"].to_pylist(),
+                table["subset"].to_pylist(),
+                table["split"].to_pylist(),
+                table["label"].to_pylist(),
+                table["architecture"].to_pylist(),
+                strict=True,
+            )
         ):
             fake = int(label) == 1
             rows.append(
                 {
-                    "uid": f"community_forensics:{split}:{subset}:{name}",
+                    # image_name repeats across generators and shards -- the
+                    # shard stem + parquet row is the stable, unique key.
+                    "uid": f"community_forensics:{split}:{stem}:{position}",
+                    "image_name": name,
                     "image": _image_bytes(image),
                     "label3": 1 if fake else 0,
                     "label_bin": int(fake),
@@ -206,12 +212,15 @@ def _iter_audits(data_dir: Path) -> Iterator[tuple[str, Rows]]:
         #              twins of the manipulated test rows (same ids), which is
         #              also why the uid must carry the method.
         prefix = f"{record.training}/{record.training}_{record.subset.lower()}"
+        # COCO-subset files keep COCO's 12-digit zero-padded names in every
+        # split; NEWS files use the bare id (verified on disk 2026-09-01).
+        stem = f"{int(record.id):012d}" if record.subset == "COCO" else str(record.id)
         if record.training == "test":
             folder = "original" if authentic else record.manipulation_type
-            relative = f"{prefix}/{folder}/{record.id}.jpg"
+            relative = f"{prefix}/{folder}/{stem}.jpg"
         else:
             kind = "original" if authentic else "manipulated"
-            relative = f"{prefix}/{record.manipulation_type}/{kind}/{record.id}.jpg"
+            relative = f"{prefix}/{record.manipulation_type}/{kind}/{stem}.jpg"
         path = data_dir / relative
         uid = f"audits:{record.training}:{record.manipulation_type}:{record.id}"
         rows.append(
