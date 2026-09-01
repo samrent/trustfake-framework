@@ -110,13 +110,18 @@ def _collate(batch):
     return failed, tensors, indices, metas
 
 
-def _load_encoder(device: torch.device):
+def _load_encoder(device: torch.device, model_name: str, pretrained: str):
     import open_clip
     from torchvision import transforms
 
-    model, _, _ = open_clip.create_model_and_transforms(
-        MODEL_NAME, pretrained=PRETRAINED
-    )
+    # A hub tag carries architecture + weights in one id (the robust
+    # encoders' loading path -- same convention as models.torch.clip_probe).
+    if model_name.startswith("hf-hub:"):
+        model, _, _ = open_clip.create_model_and_transforms(model_name)
+    else:
+        model, _, _ = open_clip.create_model_and_transforms(
+            model_name, pretrained=pretrained
+        )
     visual = model.visual.to(device).eval()
     visual.requires_grad_(False)
     transform = transforms.Compose(
@@ -182,6 +187,9 @@ def embed_dataset(
     num_workers: int = 6,
     limit_shards: int | None = None,
     device: str = "cuda",
+    model_name: str = MODEL_NAME,
+    pretrained: str = PRETRAINED,
+    uid_filter: set[str] | None = None,
 ) -> None:
     out = Path(out_dir) / dataset
     out.mkdir(parents=True, exist_ok=True)
@@ -190,7 +198,7 @@ def embed_dataset(
         json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     )
     manifest.setdefault("dataset", dataset)
-    manifest.setdefault("model", f"{MODEL_NAME}/{PRETRAINED}")
+    manifest.setdefault("model", f"{model_name}/{pretrained}")
     manifest.setdefault("preprocessing", PREPROCESSING_POLICY)
     manifest.setdefault("preprocessing_hash", POLICY_HASH)
     manifest.setdefault("feature_dim", FEATURE_DIM)
@@ -204,6 +212,10 @@ def embed_dataset(
         if limit_shards is not None and n_shards >= limit_shards:
             break
         n_shards += 1
+        if uid_filter is not None:
+            rows = [r for r in rows if r["uid"] in uid_filter]
+            if not rows:
+                continue
         stem = shard_name.removesuffix(".parquet")
         feature_file = out / f"features-{stem}.npy"
         index_file = out / f"index-{stem}.parquet"
@@ -215,7 +227,9 @@ def embed_dataset(
                 continue
 
         if visual is None:
-            visual, transform, mean, std = _load_encoder(torch_device)
+            visual, transform, mean, std = _load_encoder(
+                torch_device, model_name, pretrained
+            )
 
         loader = DataLoader(
             _RowsDataset(rows, transform),
