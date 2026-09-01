@@ -141,15 +141,26 @@ def enumerate_pairs() -> pd.DataFrame:
 
 
 def reencode(task):
-    src, dst = task
+    """(src, dst, match_path|None): originals are resized to their edit's
+    exact dimensions before the QF-85 save -- the pair premise is
+    resolution-identical members, and the sources violate it (AUDITS edits
+    are 256x256 against native originals)."""
+    src, dst, match_path = task
     dst = Path(dst)
     if dst.exists():
         return 0
     from PIL import Image
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
+        target = None
+        if match_path is not None:
+            with Image.open(match_path) as ref:
+                target = ref.size
         with Image.open(src) as im:
-            im.convert("RGB").save(dst, "JPEG", quality=QUALITY)
+            im = im.convert("RGB")
+            if target is not None and im.size != target:
+                im = im.resize(target, Image.BILINEAR)
+            im.save(dst, "JPEG", quality=QUALITY)
         return 0
     except Exception:
         return 1
@@ -160,13 +171,25 @@ def main():
     print(frame.groupby(["env", "label3"]).size())
     print("total:", len(frame), "| pairs:", frame["pair_id"].nunique())
     STAGE.mkdir(parents=True, exist_ok=True)
-    tasks = list(zip(frame["src"], frame["path"], strict=True))
+    # Two passes: edits first (unchanged geometry), then originals resized
+    # to the first edit of their pair.
+    edits = frame[frame["label3"] != 0]
+    origs = frame[frame["label3"] == 0]
+    edit_src_of_pair = dict(zip(edits["pair_id"], edits["src"], strict=False))
     failed = 0
     with ProcessPoolExecutor(max_workers=8) as pool:
+        tasks = [(s, d, None) for s, d in
+                 zip(edits["src"], edits["path"], strict=True)]
         for i, r in enumerate(pool.map(reencode, tasks, chunksize=256)):
             failed += r
             if i % 50000 == 0:
-                print(f"re-encoded {i}/{len(tasks)}", flush=True)
+                print(f"edits {i}/{len(tasks)}", flush=True)
+        tasks = [(s, d, edit_src_of_pair.get(pid)) for s, d, pid in
+                 zip(origs["src"], origs["path"], origs["pair_id"], strict=True)]
+        for i, r in enumerate(pool.map(reencode, tasks, chunksize=256)):
+            failed += r
+            if i % 50000 == 0:
+                print(f"originals {i}/{len(tasks)}", flush=True)
     print("failed re-encodes:", failed)
     frame = frame[frame["path"].map(lambda p: Path(p).exists())]
     table = pa.Table.from_pandas(frame.drop(columns=["src"]), preserve_index=False)

@@ -93,3 +93,10 @@ iteration happens on internal dev legs, held out of training here and now:
 ## Change log
 
 - 2026-09-01 — registered, PI sign-off relayed by the user the same evening.
+- 2026-09-01 (pre-training amendment, measured) — the QF-85 re-encode alone did NOT realize
+  the stated construction: AUDITS edits ship at 256×256 against native-size originals
+  (G1 stayed 0.999 post-re-encode; sagi_d 0.815, tgif 0.766 — resolution is the residual
+  tell). Staging now resizes each ORIGINAL to its edit's exact dimensions before the QF-85
+  save, making pair members resolution-identical as the spec claims. Caches wiped and the
+  chain re-run from staging; the first (invalid) Arm A pass is discarded — its G1 exclusions
+  were the machinery working as registered.
