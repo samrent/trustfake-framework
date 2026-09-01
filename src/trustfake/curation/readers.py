@@ -199,17 +199,23 @@ def _iter_audits(data_dir: Path) -> Iterator[tuple[str, Rows]]:
     rows: Rows = []
     for record in wanted.itertuples(index=False):
         authentic = record.manipulation_type == "Authentic"
-        # The zips use {split}/{split}_{subset}/{method}/{kind}/{id}.jpg, not
-        # the metadata's file_name -- verified against train.zip 2026-09-01.
-        kind = "original" if authentic else "manipulated"
-        relative = (
-            f"{record.training}/{record.training}_{record.subset.lower()}/"
-            f"{record.manipulation_type}/{kind}/{record.id}.jpg"
-        )
+        # Zip layouts differ per split (verified against the zips 2026-09-01):
+        #   train/val: {split}/{split}_{subset}/{method}/{manipulated|original}/{id}.jpg
+        #   test:      test/test_{subset}/{method}/{id}.jpg, with a SHARED
+        #              original/ dir -- test Authentic rows are the pristine
+        #              twins of the manipulated test rows (same ids), which is
+        #              also why the uid must carry the method.
+        prefix = f"{record.training}/{record.training}_{record.subset.lower()}"
+        if record.training == "test":
+            folder = "original" if authentic else record.manipulation_type
+            relative = f"{prefix}/{folder}/{record.id}.jpg"
+        else:
+            kind = "original" if authentic else "manipulated"
+            relative = f"{prefix}/{record.manipulation_type}/{kind}/{record.id}.jpg"
         path = data_dir / relative
         rows.append(
             {
-                "uid": f"audits:{record.training}:{record.id}",
+                "uid": f"audits:{record.training}:{record.manipulation_type}:{record.id}",
                 "path": str(path),
                 "label3": 0 if authentic else 2,
                 "label_bin": int(not authentic),
