@@ -226,3 +226,15 @@ gate could not be satisfied for a dataset, that dataset's exclusion is recorded 
   arbiter of shortcut death stays the per-arm G1 re-run recorded with every fit. Amended
   BEFORE any official fit; the smoke run also caught two cache-key collisions (CF image_name
   reuse, AUDITS NEWS/COCO id overlap) and AUDITS' COCO zero-padded filenames.
+- 2026-09-01 (pre-fit interpretation + preview observations; official run untouched):
+  - **G1's "fixed, not trained" binds C2 and above** — the arms whose claim is cleanliness.
+    C0/C1 fail G1 by construction (being dirty is their purpose; a literal reading would
+    forbid the ladder's own baselines and make H1 unaskable), so on the naive rungs G1 is
+    a reported diagnostic. Resolved before the official run.
+  - Preview (partial pool, 1 seed, provisional): naive-pool G1 is 0.995-1.0 in EVERY
+    multi-class environment — the headers-only shortcut is total. Propensity-C2 drives
+    per-env G1 to ~0.51, at heavy cost: AUDITS retains 6 rows, SID-Set 9 (near-zero
+    nuisance overlap: AUDITS re-encodes manipulations, SID squares its fakes) — their C2
+    cells are G3-flagged; C2 is effectively matched-CF + matched-IMD2020 + single-class
+    passthroughs. C5b's k-center partially re-imports nuisance outliers (arm G1 back to
+    ~0.61). All provisional; the official 48-fit run decides everything.
