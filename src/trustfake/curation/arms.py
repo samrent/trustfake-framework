@@ -145,27 +145,87 @@ def _dedup_within(
     return pool.iloc[kept]
 
 
+def _nuisance_axes(index: pd.DataFrame) -> pd.DataFrame:
+    """Per-axis nuisance labels (the same axes `nuisance_bins` composites)."""
+    q = pd.to_numeric(index["jpeg_q"], errors="coerce")
+    q_band = pd.cut(
+        q,
+        bins=[0, 69, 79, 89, 94, 99, 100],
+        labels=["<70", "70s", "80s", "90-94", "95-99", "100"],
+    ).astype("string").fillna("noq")
+    min_side = index[["width", "height"]].min(axis=1)
+    side_band = pd.cut(
+        min_side,
+        bins=[0, 223, 512, 1024, 10**9],
+        labels=["<224", "224-512", "513-1024", ">1024"],
+    ).astype("string")
+    return pd.DataFrame(
+        {
+            "format": index["format"].fillna("unknown").astype(str),
+            "qband": q_band.astype(str),
+            "sideband": side_band.astype(str),
+            "square": (index["width"] == index["height"]).map(
+                {True: "sq", False: "rect"}
+            ),
+            "resample": np.where(
+                min_side > 224, "down", np.where(min_side < 224, "up", "none")
+            ),
+        },
+        index=index.index,
+    )
+
+
 def _match_marginals(pool: pd.DataFrame, seed: int) -> pd.DataFrame:
-    """C2: equalize nuisance-bin marginals across classes, per environment."""
+    """C2: equalize per-axis nuisance MARGINALS across classes, per environment.
+
+    Sequential per-axis matching (two rounds), NOT joint-bin matching. The
+    joint variant was measured on the smoke pool and retained 3% of rows:
+    class and nuisance are so entangled (CF fakes PNG-native, its reals
+    mostly JPEG -- CASIA's lesson at pool scale) that exact joint cells are
+    nearly disjoint across classes, and the arm degenerates into a small-n
+    experiment instead of a curation one. The spec's own wording is
+    "matched nuisance marginals"; per-axis quotas (min across classes per
+    axis bin, re-balanced over two rounds) equalize each marginal while
+    keeping the arm at usable scale. The arbiter of whether the matching
+    actually killed the shortcut is G1 re-run on the arm -- recorded with
+    every fit -- not the matching procedure itself.
+    """
     rng = np.random.default_rng(seed)
-    bins = nuisance_bins(pool)
+    axes = _nuisance_axes(pool)
     kept_positions: list[np.ndarray] = []
     for _env, env_rows in pool.groupby("dataset"):
         classes = env_rows["label3"].unique()
         if len(classes) < 2:
             kept_positions.append(env_rows.index.to_numpy())
             continue
-        env_bins = bins.loc[env_rows.index]
-        for _bin_key, bin_rows in env_rows.groupby(env_bins):
-            counts = bin_rows["label3"].value_counts()
-            quota = int(counts.reindex(classes).fillna(0).min())
-            if quota == 0:
-                continue
-            for _, class_rows in bin_rows.groupby("label3"):
-                positions = class_rows.index.to_numpy()
-                if positions.size > quota:
-                    positions = rng.choice(positions, size=quota, replace=False)
-                kept_positions.append(np.sort(positions))
+        working = env_rows.index.to_numpy()
+        for _round in range(2):
+            for axis in ("format", "qband", "sideband", "square", "resample"):
+                frame = pool.loc[working, ["label3"]].assign(
+                    bin=axes.loc[working, axis]
+                )
+                surviving: list[np.ndarray] = []
+                for _bin_value, bin_rows in frame.groupby("bin"):
+                    counts = bin_rows["label3"].value_counts()
+                    quota = int(counts.reindex(classes).fillna(0).min())
+                    if quota == 0:
+                        continue
+                    for _, class_rows in bin_rows.groupby("label3"):
+                        positions = class_rows.index.to_numpy()
+                        if positions.size > quota:
+                            positions = rng.choice(
+                                positions, size=quota, replace=False
+                            )
+                        surviving.append(np.sort(positions))
+                working = (
+                    np.sort(np.concatenate(surviving))
+                    if surviving
+                    else np.empty(0, dtype=np.int64)
+                )
+        logger.info(
+            f"C2 matching [{_env}]: kept {working.size} of {len(env_rows)} rows"
+        )
+        kept_positions.append(working)
     keep = np.sort(np.concatenate(kept_positions))
     logger.info(f"C2 matching: kept {keep.size} of {len(pool)} rows")
     return pool.loc[keep]
