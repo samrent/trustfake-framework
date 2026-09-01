@@ -29,7 +29,9 @@ attributable choice instead of a belief.
 - **Attack budget: ℓ∞ ε = 8/255** is the project's official threat model. TB-E3's core is not an
   attack experiment, but any adversarial evaluation run under it uses 8/255. Note when reporting:
   published hardened CLIP weights (FARE4/TeCoA4) are 4/255 products — an 8/255 attack on them is
-  a beyond-training-budget evaluation and must be labeled as such.
+  a beyond-training-budget evaluation and must be labeled as such. No off-the-shelf robust CLIP
+  exists above ε=4/255 at any size (see `gotchas/robust-clip-checkpoint-availability.md`);
+  matching the 8/255 budget on the defense side would mean fine-tuning an encoder ourselves.
 - **FakeClue is excluded** — training AND evaluation. Standing policy, not a per-experiment choice
   (metadata floor 0.690, test/train identity leakage; see `reference/fakeclue-dataset-properties.md`).
 - **Thresholds come from in-domain calibration only** (`decisions/ood-thresholds-come-from-in-domain-calib.md`).
