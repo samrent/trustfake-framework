@@ -56,16 +56,13 @@ tgif_tars() {
 
 tgif2_random() {
   local d="${DATA_PATH}/tgif"
-  mkdir -p "$d/tgif2_random/parts"
-  unzip -qn "$d/tgif2_random/tgif2_random.zip" -d "$d/tgif2_random/parts" || return 1
-  # The share zip holds per-tool folders of tar.gz; unpack the image tars
-  # (skip masks and metadata) into extracted/<tool>-rnd/.
-  find "$d/tgif2_random/parts" -name "*_training.tar.gz" -o -name "*_validation.tar.gz" -o -name "*_testing.tar.gz" \
-    | grep -v masks | while read -r tarball; do
-      tool="$(basename "$(dirname "$tarball")")"
-      mkdir -p "$d/extracted/${tool}-rnd"
-      tar xzf "$tarball" -C "$d/extracted/${tool}-rnd" || exit 1
-    done
+  # Per-tool tars fetched via DAV (the share-zip endpoint returns an empty
+  # body); each unpacks a {split}/{category}/ tree into extracted/<tool>-rnd/.
+  for tarball in "$d"/tgif2_random/*.tar.gz; do
+    tool="$(basename "$tarball" | sed 's/_\(training\|validation\|testing\)\.tar\.gz$//')"
+    mkdir -p "$d/extracted/${tool}-rnd"
+    tar xzf "$tarball" -C "$d/extracted/${tool}-rnd" || return 1
+  done
 }
 
 wait_marker synthbuster   && step synthbuster synthbuster

@@ -97,12 +97,26 @@ tgif_orig()  { _tgif_fetch xEeAzrY7ES9KA8o orig  orig; }
 tgif_masks() { _tgif_fetch xEeAzrY7ES9KA8o masks masks; }
 tgif_ps_sp() { _tgif_fetch xEeAzrY7ES9KA8o ps-sp ps-sp; }
 
-# --- TGIF2 random-mask share: whole share as one zip (78 GB) ----------------
+# --- TGIF2 random-mask share: per-folder tars via DAV -----------------------
+# The whole-share ?accept=zip endpoint returns an EMPTY body with exit 0
+# (measured 2026-09-01) -- a silent failure the marker would have blessed.
+# Folder list read from the share via PROPFIND the same day; masks and
+# metadata are skipped (readers never see masks, metadata is in GitHub).
+TGIF2_TOOLS=(sd2-sp sd2-fr sdxl-fr flux1schnell-sp flux1schnell-fr
+             flux1dev-sp flux1dev-fr flux1filldev-sp flux1filldev-fr)
 tgif2_random() {
   local dest="${DATA_PATH}/tgif/tgif2_random"; mkdir -p "$dest"
-  curl -sS -C - -H 'X-Requested-With: XMLHttpRequest' \
-    -o "$dest/tgif2_random.zip" \
-    'https://cloud.ilabt.imec.be/index.php/s/GDGewtTFcHccaNj/download?accept=zip'
+  for tool in "${TGIF2_TOOLS[@]}"; do
+    for split in training validation testing; do
+      local f="${tool}_${split}.tar.gz"
+      curl -sS -C - -H 'X-Requested-With: XMLHttpRequest' \
+        -o "$dest/$f" \
+        "https://cloud.ilabt.imec.be/public.php/dav/files/GDGewtTFcHccaNj/${tool}/${f}" \
+        || return 1
+      # a DAV 404 arrives as a tiny XML body with exit 0 -- refuse it
+      [ "$(stat -c%s "$dest/$f")" -lt 10000 ] && { echo "short file: $f"; return 1; }
+    done
+  done
 }
 
 # One process per HOST is the useful parallelism (Zenodo throttles a single
