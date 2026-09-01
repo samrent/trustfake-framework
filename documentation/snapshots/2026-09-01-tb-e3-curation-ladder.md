@@ -67,3 +67,23 @@ TB-E2 single-dataset probes sat at chance on shifted accuracy; every arm here cl
 on every leg. Multi-dataset training moves the needle even naively; curated multi-dataset
 moves it far on the generation axis (L3 0.97, L2 0.75). The per-modality rows: tampered
 in-domain is still weak everywhere (0.46-0.59) — the resize-224 low-pass hypothesis stands.
+
+## Phase 2 (H4) and the hardening cells (same day)
+
+**H4 — no invariance objective adopted** (rule: beat pooled ERM on L3+L4, lose <=0.01 L1).
+GroupDRO L1 0.6754 / L2 0.7156 / L3 0.9683 / L4 0.6485; V-REx 0.7723 / 0.7155 / 0.9601 /
+0.6232; pooled ERM (C3a) 0.7523 / 0.7458 / 0.9732 / 0.5434. Neither fires the rule — but both
+repair +0.08-0.10 of the L4 damage that matching caused, at L2/L3 cost. Directed follow-up:
+invariance helps exactly where matching starves the arm.
+
+**FARE4-B/16 column on the winning arm** (adversarially fine-tuned encoder, eps=4/255): L1
+0.669 / L2 0.644 / L3 0.913 / L4 0.534 (3 seeds, SD <= 0.003) vs the standard encoder's
+0.752 / 0.746 / 0.973 / 0.543. The robustification tax survives curation on every clean leg —
+good data does not close the gap.
+
+**8/255 battery on the winning head** (C3a s1, SID prefix-1000, project threat model):
+clean top-1 0.661, fd_auroc 0.7215. query_underconf (400 queries): argmax 100% preserved,
+fd_auroc 0.7229 — the confidence axis HELD under the black-box budget that collapsed the
+undefended B/32 probe in TB-E2. PGD-40 white-box: accuracy 0.104, fd_auroc 0.367 (below
+chance) — undefended encoders die white-box at 8/255, the standing argument for the custom
+8/255 fine-tune (no published robust CLIP exists above 4/255).
