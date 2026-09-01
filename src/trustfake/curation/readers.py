@@ -284,6 +284,94 @@ def _iter_vision(data_dir: Path) -> Iterator[tuple[str, Rows]]:
     yield from _chunks(rows, "vision")
 
 
+def _iter_tgif(data_dir: Path) -> Iterator[tuple[str, Rows]]:
+    """TGIF/TGIF2 from `extracted/{tool}/{split}/{category}/{file}.png`.
+
+    `orig` is the real environment; every other tool is tampered with
+    `generator` = tool name. `tool` rides as its own column because the
+    pool filter excludes ps-sp (frozen L4) by it. Masks are never
+    extracted into this tree.
+    """
+    extracted = data_dir / "extracted"
+    rows: Rows = []
+    for image in sorted(extracted.rglob("*.png")):
+        relative = image.relative_to(extracted)
+        if len(relative.parts) < 4 or "_mask_" in image.name:
+            continue
+        tool, split, category = relative.parts[0], relative.parts[1], relative.parts[2]
+        real = tool == "orig"
+        rows.append(
+            {
+                "uid": f"tgif:{split}:{tool}/{category}/{image.name}",
+                "path": str(image),
+                "label3": 0 if real else 2,
+                "label_bin": int(not real),
+                "generator": None if real else tool,
+                "source_split": split,
+                "tool": tool,
+                "category": category,
+            }
+        )
+    if not rows:
+        raise FileNotFoundError(f"tgif: nothing under {extracted} -- extract first")
+    yield from _chunks(rows, "tgif")
+
+
+def _iter_imd2020(data_dir: Path) -> Iterator[tuple[str, Rows]]:
+    """IMD2020 from three extracted subtrees.
+
+    real_life/<id>/: `*_orig.jpg` real + human-made manipulations (the
+    irreplaceable in-the-wild env); camera_real/<brand>/<model>/: reals;
+    gan_inpaint/: pre-diffusion GAN inpaintings (tampered). Masks skipped.
+    """
+    rows: Rows = []
+    for image in sorted((data_dir / "real_life").rglob("*")):
+        if image.suffix.lower() not in {".jpg", ".jpeg", ".png"} or "mask" in image.name:
+            continue
+        real = image.stem.endswith("_orig")
+        rows.append(
+            {
+                "uid": f"imd2020:real_life:{image.parent.name}/{image.name}",
+                "path": str(image),
+                "label3": 0 if real else 2,
+                "label_bin": int(not real),
+                "generator": None if real else "human_manual",
+                "source_split": "real_life",
+            }
+        )
+    for image in sorted((data_dir / "camera_real").rglob("*")):
+        if image.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+            continue
+        rows.append(
+            {
+                "uid": f"imd2020:camera_real:{image.parent.parent.name}/{image.parent.name}/{image.name}",
+                "path": str(image),
+                "label3": 0,
+                "label_bin": 0,
+                "generator": None,
+                "source_split": "camera_real",
+            }
+        )
+    gan_root = data_dir / "gan_inpaint"
+    if gan_root.exists():
+        for image in sorted(gan_root.rglob("*")):
+            if image.suffix.lower() not in {".jpg", ".jpeg", ".png"} or "mask" in image.name:
+                continue
+            rows.append(
+                {
+                    "uid": f"imd2020:gan_inpaint:{image.parent.name}/{image.name}",
+                    "path": str(image),
+                    "label3": 2,
+                    "label_bin": 1,
+                    "generator": "yu2018_gan_inpainting",
+                    "source_split": "gan_inpaint",
+                }
+            )
+    if not rows:
+        raise FileNotFoundError(f"imd2020: nothing under {data_dir} -- extract first")
+    yield from _chunks(rows, "imd2020")
+
+
 READERS = {
     "sid_set": _iter_sid_set,
     "so_fake_ood": _iter_so_fake_ood,
@@ -291,6 +379,8 @@ READERS = {
     "audits": _iter_audits,
     "synthbuster": _iter_synthbuster,
     "vision": _iter_vision,
+    "tgif": _iter_tgif,
+    "imd2020": _iter_imd2020,
 }
 
 
