@@ -222,7 +222,12 @@ def _iter_audits(data_dir: Path) -> Iterator[tuple[str, Rows]]:
             kind = "original" if authentic else "manipulated"
             relative = f"{prefix}/{record.manipulation_type}/{kind}/{stem}.jpg"
         path = data_dir / relative
-        uid = f"audits:{record.training}:{record.manipulation_type}:{record.id}"
+        # NEWS and COCO id spaces overlap numerically, so the subset is part
+        # of the key (2,402 collisions without it, measured on the cache).
+        uid = (
+            f"audits:{record.training}:{record.subset.lower()}:"
+            f"{record.manipulation_type}:{record.id}"
+        )
         rows.append(
             {
                 "uid": uid,
