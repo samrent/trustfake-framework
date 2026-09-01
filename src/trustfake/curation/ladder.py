@@ -156,10 +156,17 @@ def freeze_all_legs(features_root: str | Path, out_root: str | Path) -> None:
     l4_parts = [audits_index.loc[audits_index["source_split"] == "test"]]
     try:
         tgif_index, _ = load_cache(features_root, "tgif")
+        # ps-sp (every split -- the tool is held out entirely) plus the
+        # ORIGINALS' testing rows as negatives. The random-mask tools are
+        # training tools; their testing rows must NOT enter L4, which
+        # measures unseen mechanisms only.
         l4_parts.append(
             tgif_index.loc[
-                (tgif_index.get("tool") == "ps-sp")
-                | tgif_index["source_split"].astype(str).str.contains("test")
+                (tgif_index["tool"] == "ps-sp")
+                | (
+                    (tgif_index["tool"] == "orig")
+                    & (tgif_index["source_split"] == "testing")
+                )
             ]
         )
     except FileNotFoundError:
