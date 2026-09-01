@@ -29,7 +29,22 @@ def main() -> None:
     embed.add_argument("--limit-shards", type=int, default=None)
     embed.add_argument("--device", default="cuda")
 
+    spot = sub.add_parser("spotcheck", help="G4: render a 20-image label contact sheet")
+    spot.add_argument("--dataset", required=True)
+    spot.add_argument("--data-dir", default=None)
+    spot.add_argument("--out", default=None, help="default: $OUTPUT_PATH/tb_e3/g4/<dataset>.png")
+    spot.add_argument("--seed", type=int, default=0)
+
     args = parser.parse_args()
+    if args.command == "spotcheck":
+        from trustfake.curation.spotcheck import make_contact_sheet
+
+        data_dir = args.data_dir or os.path.join(os.environ["DATA_PATH"], args.dataset)
+        out = args.out or os.path.join(
+            os.environ["OUTPUT_PATH"], "tb_e3", "g4", f"{args.dataset}.png"
+        )
+        make_contact_sheet(args.dataset, data_dir=data_dir, out_file=out, seed=args.seed)
+        return
     if args.command == "embed":
         data_dir = args.data_dir or os.path.join(os.environ["DATA_PATH"], args.dataset)
         out = args.out or os.path.join(os.environ["OUTPUT_PATH"], "tb_e3", "features")
