@@ -9,6 +9,7 @@ task needs them.
 - [rejected/MANIFEST.md](rejected/MANIFEST.md) — two hypotheses measured and killed on 2026-08-31
 - [snapshots/MANIFEST.md](snapshots/MANIFEST.md) — dated result tables
 - [reference/MANIFEST.md](reference/MANIFEST.md) — the colleague repo, and FakeClue's properties
+- [specs/MANIFEST.md](specs/MANIFEST.md) — executable experiment specs; TB-E3 curation ladder is registered and ready to run
 
 **The one-line state (2026-08-31):** Track B's chain is 4/6 complete on the 3090 box; a CLIP
 linear probe beats the trained ResNet in-domain but **both sit at chance cross-dataset**, and
