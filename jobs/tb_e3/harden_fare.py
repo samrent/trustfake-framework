@@ -101,10 +101,10 @@ def main() -> None:
                 indent=2,
             )
         )
-        print(
-            f"fare_c3a s{seed}: "
-            + " ".join(f"{leg}={m['detection_auroc']:.4f}" for leg, m in metrics.items())
+        summary = " ".join(
+            f"{leg}={m['detection_auroc']:.4f}" for leg, m in metrics.items()
         )
+        print(f"fare_c3a s{seed}: {summary}")
     print("HARDEN_FARE_COMPLETE")
 
 
