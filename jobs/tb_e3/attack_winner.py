@@ -36,7 +36,9 @@ BATCH = 32
 
 
 def build_wrapper(head_state: dict, device: torch.device) -> BaseWrapper:
-    probe = clip_probe(num_classes=3, model_name="ViT-B-16", pretrained="laion2b_s34b_b88k")
+    probe = clip_probe(
+        num_classes=3, model_name="ViT-B-16", pretrained="laion2b_s34b_b88k"
+    )
     probe.head.load_state_dict(
         {k.removeprefix("head."): v for k, v in head_state.items()}
     )
