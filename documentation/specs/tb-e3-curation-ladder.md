@@ -183,3 +183,29 @@ gate could not be satisfied for a dataset, that dataset's exclusion is recorded 
   WildFake/Dresden dropped, GenImage restricted to bias-controlled splits, CASIA/AutoSplice
   admitted only with format controls. Day-1 actions added: NIST MFC request, Chameleon email.
   Preprocessing-policy requirement added to the instrument section.
+- 2026-09-01 (execution, R2 onward) — protocol constants chosen and registered BEFORE any arm
+  was fitted; implementation in `src/trustfake/curation/` on branch tb-e3-curation-ladder:
+  - **Instrument validated**: cached-feature fits reproduce TB-E2's B/16 in-domain cell to
+    ≤0.0095 on every metric (accuracy 0.9092 vs 0.9093; `jobs/tb_e3/sanity_b16.py`).
+  - **G2 threshold**: max cosine ≥ 0.95 in frozen-B/16 space (exact dups ≈ 1.0). Applies vs
+    L1–L4 to EVERY arm including C0 (the gate protects the measurement, not the arm). C1's
+    within-pool dedup is within-CLASS only — an original and its edit are a cross-class
+    near-identical pair and are the tampered signal, not dirt. **G3 minimum**: 200/cell.
+  - **L3 frozen**: entire generators DALL·E 3, Midjourney v5, Adobe Firefly (Synthbuster
+    folders; reserved across all environments by name pattern) + a seeded 6k CF-Small real
+    reserve as negatives. Newest closed/commercial available in-pool; L2 already carries the
+    2025-era shift (FLUX_2, GPT4o, Ideogram3, Recraftv3 — verified in G4 sheet).
+  - **L4 frozen**: AUDITS PowerPaint (test-only in AUDITS by its own split design, zero
+    training presence) with AUDITS test-Authentic negatives; plus TGIF ps-sp
+    (Photoshop/Firefly generative fill) with TGIF originals as negatives when cached. If
+    SAGI-D is ever admitted to training, its PowerPaint rows must be dropped (L4 conflict).
+  - **C-arm operationalizations**: C0–C2 carry the naive unmappable→synthetic fold
+    (colleague-repo default); C4/C5 build on strict-drop (H2 tie default); C5 budget =
+    |C4|, so C4/C5a/C5b compare allocation at a fixed total. Note: the ingested shortlist
+    has **zero unmappable rows** (every dataset's fake modality is known per-image), so
+    C3a ≡ C3b structurally and H2 resolves by the tie rule unless a binary-fake env lands.
+  - **GenImage deferred** (open item, not a drop): 654 GB monolithic on Dataverse or
+    Drive-quota gdown; does not fit the box's disk beside the core (1.3 TB free at start).
+    Unbiased-genimage metadata CSV (224 MB) noted for a later, subset-based admission.
+  - **Not yet actioned, needs a human**: NIST MFC email, Chameleon email, RAISE form,
+    Kaggle credentials for SAGI-D/ArtiFact (no ~/.kaggle/kaggle.json on the box).
