@@ -68,7 +68,10 @@ def make_contact_sheet(
     sheet = Image.new("RGB", (COLUMNS * TILE, n_rows * (TILE + 18)), "white")
     draw = ImageDraw.Draw(sheet)
     for position, row in enumerate(picked_rows):
-        with Image.open(io.BytesIO(row["image"])) as pil:
+        source = (
+            io.BytesIO(row["image"]) if row.get("image") is not None else row["path"]
+        )
+        with Image.open(source) as pil:
             tile = pil.convert("RGB").resize((TILE, TILE))
         x = (position % COLUMNS) * TILE
         y = (position // COLUMNS) * (TILE + 18)

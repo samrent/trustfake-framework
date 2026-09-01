@@ -139,18 +139,19 @@ def _iter_community_forensics_small(data_dir: Path) -> Iterator[tuple[str, Rows]
         )
         rows: Rows = []
         stem = shard.name.removesuffix(".parquet")
-        for position, (name, image, model, real_source, subset, split, label, arch) in enumerate(
-            zip(
-                table["image_name"].to_pylist(),
-                table["image_data"].to_pylist(),
-                table["model_name"].to_pylist(),
-                table["real_source"].to_pylist(),
-                table["subset"].to_pylist(),
-                table["split"].to_pylist(),
-                table["label"].to_pylist(),
-                table["architecture"].to_pylist(),
-                strict=True,
-            )
+        columns = zip(
+            table["image_name"].to_pylist(),
+            table["image_data"].to_pylist(),
+            table["model_name"].to_pylist(),
+            table["real_source"].to_pylist(),
+            table["subset"].to_pylist(),
+            table["split"].to_pylist(),
+            table["label"].to_pylist(),
+            table["architecture"].to_pylist(),
+            strict=True,
+        )
+        for position, (name, image, model, real_source, subset, split, label, arch) in (
+            enumerate(columns)
         ):
             fake = int(label) == 1
             rows.append(
