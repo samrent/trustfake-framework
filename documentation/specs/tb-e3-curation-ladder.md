@@ -58,6 +58,10 @@ attributable choice instead of a belief.
   markers; back up `_runs/` when the ladder completes.
 - Capped/test splits must be shuffled before any prefix cap
   (`gotchas/limit-test-prefix-needs-a-shuffled-order.md`).
+- **One preprocessing policy, recorded in the manifest:** how RAW (RAISE NEF) is developed, how
+  sub-224 images (ArtiFact 200 px) travel to input size, and any re-encoding (CASIA uniform JPEG).
+  The route to 224 is itself a per-dataset signature that headers-only G1 cannot fully see —
+  matched marginals in C2 must include source resolution and the resample direction.
 
 ## Evaluation legs — freeze BEFORE curation starts, write a frozen-legs manifest
 
@@ -71,17 +75,28 @@ attributable choice instead of a belief.
 Prefer L3 generators *newer* than any training generator (temporal realism). L3/L4 membership is
 chosen at ingestion, recorded in the frozen-legs manifest, and never revisited.
 
-## Datasets — candidate pool (confirm availability at R1)
+## Datasets — R1 verified 2026-09-01, details in `reference/dataset-availability-tb-e3.md`
 
-- **Synthetic environments:** GenImage (primary; generator labels = environment labels);
-  Community Forensics; WildFake; ArtiFact; Synthbuster.
-- **Tampered environments (scarce, thesis-critical):** MAGIC; TGIF; SAGI-D; DEFACTO; IMD2020;
-  NIST MFC (needs registration); CASIA v2.
-- **Real reinforcement:** reals shipped with the above; RAISE; Dresden; VISION. Span camera-native
-  AND web-recompressed reals, or "real = clean pipeline" becomes the next shortcut.
-- **Eval-only:** So-Fake-OOD; optionally Chameleon as a brutal second synthetic eval.
-- **Excluded:** FakeClue (policy); So-Fake-Set (sibling of L2); FF++-derived content unless
-  identity-quarantined.
+- **Synthetic environments:** Community Forensics (primary: 4,803 generators, per-image labels,
+  ungated) + GenImage via the **unbiased-genimage.org bias-controlled splits** (raw GenImage has a
+  documented JPEG/size confound); Synthbuster as a small clean env; ArtiFact optional (200 px,
+  pre-JPEG'd); ELSA D3 optional (LAION link-rot on reals).
+- **Tampered environments (scarce, thesis-critical):** AUDITS (530k, masks, 11 method labels —
+  supersedes the never-released MAGIC) + **TGIF2** (not TGIF: adds FLUX.1 + random masks against
+  boundary-cheating) + SAGI-D (dedup vs RAISE — it sources from it) + IMD2020 (the only human-made
+  in-the-wild edits). DEFACTO optional (COCO leakage tax). NIST MFC: **file the request on day 1**
+  (portal down, agreements take days–weeks; email mfc_poc@nist.gov), treat as a later bonus.
+  CASIA v2 only re-encoded to uniform JPEG (metadata alone scores ~0.92 AUC on it raw), never
+  headline. AutoSplice only via its JPEG-75 control variant.
+- **Real reinforcement:** VISION (primary: 35 devices, CC BY-SA, and its Facebook/WhatsApp/YouTube
+  re-shares cover the web-recompressed-real cell natively); RAISE (RAW, form-gated; also
+  Synthbuster's paired real source). Span camera-native AND web-recompressed reals.
+- **Eval-only:** So-Fake-OOD; Chameleon (email-gated — request on day 1).
+- **Excluded:** FakeClue (policy); So-Fake-Set (sibling of L2); WildFake (sole host ModelScope,
+  license unverifiable); Dresden (official host dead, mirror provenance unofficial); MAGIC (never
+  released); FF++-derived content unless identity-quarantined.
+- **L4 candidates:** reserve one editing tool never trained on — e.g. Firefly (in TGIF2) or one
+  AUDITS method.
 
 ## Validity gates — an arm that fails a gate is fixed, not trained
 
@@ -163,3 +178,8 @@ gate could not be satisfied for a dataset, that dataset's exclusion is recorded 
 
 - 2026-09-01 — registered. PI answers folded in: budget 8/255; FakeClue exclusion is policy;
   EV-AT ladder spec unknown (open input). Datasets pending availability confirmation (R1).
+- 2026-09-01 — R1 availability verification completed (three web research passes; details in
+  `reference/dataset-availability-tb-e3.md`). Shortlist updated: MAGIC→AUDITS, TGIF→TGIF2,
+  WildFake/Dresden dropped, GenImage restricted to bias-controlled splits, CASIA/AutoSplice
+  admitted only with format controls. Day-1 actions added: NIST MFC request, Chameleon email.
+  Preprocessing-policy requirement added to the instrument section.
