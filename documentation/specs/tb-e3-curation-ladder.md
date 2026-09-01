@@ -1,7 +1,7 @@
 ---
 type: spec
 title: TB-E3 — the curation ladder (multi-dataset hybrid, data-selection ablation)
-status: active
+status: active  # core ladder complete 2026-09-01; phase 2 (H4) + hardening in flight
 as_of: 2026-09-01
 source: "registered 2026-09-01; PI answers of the same day folded in (budget 8/255, FakeClue exclusion is policy)"
 tags: [track-b, experiments, curation, generalisation, spec]
