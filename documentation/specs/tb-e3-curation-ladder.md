@@ -207,5 +207,11 @@ gate could not be satisfied for a dataset, that dataset's exclusion is recorded 
   - **GenImage deferred** (open item, not a drop): 654 GB monolithic on Dataverse or
     Drive-quota gdown; does not fit the box's disk beside the core (1.3 TB free at start).
     Unbiased-genimage metadata CSV (224 MB) noted for a later, subset-based admission.
-  - **Not yet actioned, needs a human**: NIST MFC email, Chameleon email, RAISE form,
-    Kaggle credentials for SAGI-D/ArtiFact (no ~/.kaggle/kaggle.json on the box).
+  - **Not yet actioned, needs a human**: NIST MFC email, Chameleon email, RAISE form.
+- 2026-09-01 (later) — Kaggle access token provided by the user; **SAGI-D admitted** to the
+  pool (giakop/sagi-d, 95,839 fakes / 6 modern inpainting tools + sequential multi-tool
+  combos, sources COCO 64.6k / RAISE 25.7k / OpenImages 5.6k test-only; in-env originals
+  ingested as reals via src_path). The frozen-L4 conflict rule is realized in the pool
+  filter: any row whose generator mentions PowerPaint (pure or in a combo, ~18.6k rows)
+  is excluded from every arm. RAISE-lineage overlap is left to G2. ArtiFact stays out
+  (optional in R1; 200 px pre-JPEG'd, low marginal value beside CF-Small).
