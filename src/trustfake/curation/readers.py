@@ -385,6 +385,69 @@ def _iter_imd2020(data_dir: Path) -> Iterator[tuple[str, Rows]]:
     yield from _chunks(rows, "imd2020")
 
 
+def _iter_sagi_d(data_dir: Path) -> Iterator[tuple[str, Rows]]:
+    """SAGI-D (giakop/sagi-d): metadata-CSV-driven, modern inpainting tools.
+
+    Fakes carry `generator` = inpainting_model (comma-joined for the
+    sequential multi-tool edits); the unique originals referenced by
+    src_path are the in-env reals (COCO / RAISE / OpenImages sources --
+    the RAISE lineage is why G2 must see this dataset before any RAISE
+    rows join a leg). PowerPaint rows are NOT filtered here: the reader
+    reports what ships, the pool filter enforces the frozen L4 rule.
+    """
+    import pandas as pd
+
+    frame = pd.read_csv(data_dir / "sagid.csv")
+
+    def resolve(raw: str) -> Path:
+        relative = raw.replace("\\", "/").removeprefix("sagid/")
+        direct = data_dir / relative
+        return direct if direct.exists() else data_dir / "sagid" / relative
+
+    rows: Rows = []
+    for record in frame.itertuples(index=False):
+        relative = record.img_path.replace("\\", "/").removeprefix("sagid/")
+        source = relative.split("/")[1] if len(relative.split("/")) > 1 else "unknown"
+        rows.append(
+            {
+                "uid": f"sagi_d:{record.split}:{relative}",
+                "path": str(resolve(record.img_path)),
+                "label3": 2,
+                "label_bin": 1,
+                "generator": record.inpainting_model,
+                "source_split": record.split,
+                "real_source": source,
+                "diffusion_model": record.diffusion_model,
+            }
+        )
+    originals = frame.drop_duplicates("src_path")
+    for record in originals.itertuples(index=False):
+        relative = record.src_path.replace("\\", "/").removeprefix("sagid/")
+        source = relative.split("/")[1] if len(relative.split("/")) > 1 else "unknown"
+        rows.append(
+            {
+                "uid": f"sagi_d:{record.split}:{relative}",
+                "path": str(resolve(record.src_path)),
+                "label3": 0,
+                "label_bin": 0,
+                "generator": None,
+                "source_split": record.split,
+                "real_source": source,
+                "diffusion_model": None,
+            }
+        )
+    rows.sort(key=lambda r: r["uid"])
+    missing = sum(1 for r in rows if not Path(r["path"]).exists())
+    if missing > len(rows) * 0.01:
+        msg = f"sagi_d: {missing} of {len(rows)} files missing -- extract first"
+        logger.error(msg)
+        raise FileNotFoundError(msg)
+    if missing:
+        logger.warning(f"sagi_d: {missing} files missing, skipped")
+        rows = [r for r in rows if Path(r["path"]).exists()]
+    yield from _chunks(rows, "sagi_d")
+
+
 READERS = {
     "sid_set": _iter_sid_set,
     "so_fake_ood": _iter_so_fake_ood,
@@ -394,6 +457,7 @@ READERS = {
     "vision": _iter_vision,
     "tgif": _iter_tgif,
     "imd2020": _iter_imd2020,
+    "sagi_d": _iter_sagi_d,
 }
 
 

@@ -36,6 +36,7 @@ POOL_DATASETS = (
     "vision",
     "imd2020",
     "tgif",
+    "sagi_d",
 )
 
 #: L3, frozen at ingestion: entire commercial generators, newest available
@@ -66,6 +67,14 @@ def _pool_filter(dataset: str, index: pd.DataFrame) -> pd.Series:
     if dataset == "tgif":
         keep = index["source_split"].astype(str).str.contains("training")
         return keep & (index.get("tool", pd.Series("", index=index.index)) != "ps-sp")
+    if dataset == "sagi_d":
+        # Frozen L4 rule: PowerPaint has zero training presence, so any row
+        # whose (possibly multi-tool) generator mentions it stays out.
+        keep = index["source_split"].isin(["train", "val"])
+        powerpaint = (
+            index["generator"].fillna("").astype(str).str.contains("powerpaint")
+        )
+        return keep & ~powerpaint
     return pd.Series(True, index=index.index)
 
 
