@@ -75,8 +75,11 @@ vision_images() {
   wget -c -q https://lesc.dinfo.unifi.it/VISION/VISION_files.txt -O "$dest/VISION_files.txt"
   grep '/images/' "$dest/VISION_files.txt" > "$dest/vision_images.txt"
   say "  vision: $(wc -l < "$dest/vision_images.txt") image files"
-  # -x keeps the device/collection tree; -nH drops the hostname prefix.
-  (cd "$dest" && wget -c -x -nH --cut-dirs=1 -q -i vision_images.txt)
+  # 8 parallel wget workers -- one sequential stream measured ~0.1 MB/s
+  # against this host, which would take days for 34k files. -x keeps the
+  # device/collection tree; -nH drops the hostname prefix; -c makes a
+  # re-run cheap (existing complete files are skipped).
+  (cd "$dest" && xargs -P 8 -n 40 wget -c -x -nH --cut-dirs=1 -q < vision_images.txt)
 }
 
 # --- TGIF share 1: originals + masks + ps-sp (L4 candidate) -----------------

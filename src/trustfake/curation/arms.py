@@ -100,32 +100,45 @@ def _drop_leg_leakage(
 
 
 def _dedup_within(
-    pool: pd.DataFrame, pool_features: np.ndarray, device: str, chunk: int = 2048
+    pool: pd.DataFrame, pool_features: np.ndarray, device: str, chunk: int = 1024
 ) -> pd.DataFrame:
     """Keep-first near-duplicate removal within the pool (C1 hygiene).
 
+    WITHIN-CLASS on purpose: a pristine original and its local edit are a
+    near-identical cross-class pair, and that pair is precisely the training
+    signal for the tampered class (AUDITS/TGIF/IMD2020 all ship them).
+    Hygiene targets the same content appearing twice under the SAME label
+    (e.g. one photo reaching the pool through two datasets); it must never
+    delete the original-vs-edit contrast. Cross-class near-duplicates
+    against the EVAL legs are a different matter entirely -- G2 drops those
+    regardless of class, because that is content leakage into measurement.
+
     Row order is the cache order (deterministic), so "first" is stable.
-    Chunked lower-triangular max-cosine on the GPU.
+    Chunked lower-triangular max-cosine on the GPU, per class.
     """
     torch_device = torch.device(device)
-    rows = pool["cache_row"].to_numpy()
-    features = torch.from_numpy(pool_features).to(torch_device, torch.float16)
-    n = features.shape[0]
-    keep = torch.ones(n, dtype=torch.bool, device=torch_device)
-    for start in range(chunk, n, chunk):
-        block = features[start : start + chunk]
-        # against every EARLIER row that itself survived
-        earlier = features[:start]
-        alive = keep[:start]
-        sims = (block @ earlier.T)
-        sims[:, ~alive] = 0
-        dup = sims.max(dim=1).values >= G2_COSINE_THRESHOLD
-        keep[start : start + chunk] &= ~dup
-    kept = keep.cpu().numpy()
-    logger.info(f"C1 within-pool dedup: dropped {int((~kept).sum())} of {n} rows")
-    del features
-    torch.cuda.empty_cache()
-    return pool.iloc[np.flatnonzero(kept)]
+    kept_all: list[np.ndarray] = []
+    for label in sorted(pool["label3"].unique()):
+        positions = np.flatnonzero((pool["label3"] == label).to_numpy())
+        features = torch.from_numpy(pool_features[positions]).to(
+            torch_device, torch.float16
+        )
+        n = features.shape[0]
+        keep = torch.ones(n, dtype=torch.bool, device=torch_device)
+        for start in range(chunk, n, chunk):
+            block = features[start : start + chunk]
+            sims = block @ features[:start].T
+            sims[:, ~keep[:start]] = 0
+            dup = sims.max(dim=1).values >= G2_COSINE_THRESHOLD
+            keep[start : start + chunk] &= ~dup
+        kept_all.append(positions[keep.cpu().numpy()])
+        del features
+        torch.cuda.empty_cache()
+    kept = np.sort(np.concatenate(kept_all))
+    logger.info(
+        f"C1 within-class dedup: dropped {len(pool) - kept.size} of {len(pool)} rows"
+    )
+    return pool.iloc[kept]
 
 
 def _match_marginals(pool: pd.DataFrame, seed: int) -> pd.DataFrame:

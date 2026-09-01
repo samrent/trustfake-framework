@@ -166,10 +166,125 @@ def _iter_community_forensics_small(data_dir: Path) -> Iterator[tuple[str, Rows]
         yield shard.name, rows
 
 
+def _chunks(rows: Rows, prefix: str, size: int = 2000) -> Iterator[tuple[str, Rows]]:
+    """Synthetic shards for file-tree datasets, so embed resume still works."""
+    for start in range(0, len(rows), size):
+        yield f"{prefix}-{start // size:04d}", rows[start : start + size]
+
+
+#: The L4 held-out tool inside AUDITS: present ONLY in its test split (the
+#: dataset's own OOD design), so it has zero training presence by
+#: construction. Frozen here at ingestion, per the spec.
+AUDITS_L4_METHOD = "PowerPaint"
+
+
+def _iter_audits(data_dir: Path) -> Iterator[tuple[str, Rows]]:
+    """AUDITS (DivyaApp/AUDITS): metadata parquet + extracted train/val/test.
+
+    Pool candidates: the dataset's own train+val splits (4 methods +
+    Authentic). Leg L4: test-split Authentic + the held-out method -- the
+    other test-only methods are not embedded (nothing in the ladder reads
+    them). `generator` carries manipulation_type; Authentic rows are reals.
+    """
+    table = pq.read_table(data_dir / "data" / "train-00000-of-00001.parquet").to_pandas()
+    wanted = table[
+        table["training"].isin(["train", "val"])
+        | (
+            (table["training"] == "test")
+            & table["manipulation_type"].isin(["Authentic", AUDITS_L4_METHOD])
+        )
+    ]
+    rows: Rows = []
+    for record in wanted.itertuples(index=False):
+        authentic = record.manipulation_type == "Authentic"
+        relative = record.original_path if authentic else record.file_name
+        path = data_dir / relative
+        rows.append(
+            {
+                "uid": f"audits:{record.training}:{record.id}",
+                "path": str(path),
+                "label3": 0 if authentic else 2,
+                "label_bin": int(not authentic),
+                "generator": None if authentic else record.manipulation_type,
+                "source_split": record.training,
+                "subset": record.subset,
+                "distribution": record.distribution,
+            }
+        )
+    rows.sort(key=lambda r: r["uid"])
+    missing = [r for r in rows if not Path(r["path"]).exists()]
+    if missing:
+        msg = f"audits: {len(missing)} of {len(rows)} files missing (e.g. {missing[0]['path']}) -- extract the zips first"
+        logger.error(msg)
+        raise FileNotFoundError(msg)
+    yield from _chunks(rows, "audits")
+
+
+def _iter_synthbuster(data_dir: Path) -> Iterator[tuple[str, Rows]]:
+    """Synthbuster: nine per-generator folders of 1,000 PNGs, all synthetic.
+
+    No paired reals in the archive (RAISE-1k is a separate, form-gated
+    download); a single-class environment, which C2 passes through.
+    """
+    rows: Rows = []
+    for image in sorted(data_dir.rglob("*")):
+        if image.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"}:
+            continue
+        generator = image.parent.name
+        rows.append(
+            {
+                "uid": f"synthbuster:all:{generator}/{image.name}",
+                "path": str(image),
+                "label3": 1,
+                "label_bin": 1,
+                "generator": generator,
+                "source_split": "all",
+            }
+        )
+    if not rows:
+        raise FileNotFoundError(f"synthbuster: no images under {data_dir} -- extract first")
+    yield from _chunks(rows, "synthbuster")
+
+
+def _iter_vision(data_dir: Path) -> Iterator[tuple[str, Rows]]:
+    """VISION: per-device folders, images only; every row is camera real.
+
+    `subset` records the collection (flat / nat / natFBH / natFBL / natWA),
+    which is the native-vs-web-recompressed axis the spec wants covered;
+    the device id rides in `device`.
+    """
+    rows: Rows = []
+    for image in sorted(data_dir.rglob("*")):
+        if image.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+            continue
+        if "/images/" not in str(image):
+            continue
+        collection = image.parent.name
+        device = image.parts[image.parts.index("images") - 1] if "images" in image.parts else "unknown"
+        rows.append(
+            {
+                "uid": f"vision:all:{device}/{collection}/{image.name}",
+                "path": str(image),
+                "label3": 0,
+                "label_bin": 0,
+                "generator": None,
+                "source_split": "all",
+                "subset": collection,
+                "device": device,
+            }
+        )
+    if not rows:
+        raise FileNotFoundError(f"vision: no images under {data_dir}")
+    yield from _chunks(rows, "vision")
+
+
 READERS = {
     "sid_set": _iter_sid_set,
     "so_fake_ood": _iter_so_fake_ood,
     "community_forensics_small": _iter_community_forensics_small,
+    "audits": _iter_audits,
+    "synthbuster": _iter_synthbuster,
+    "vision": _iter_vision,
 }
 
 

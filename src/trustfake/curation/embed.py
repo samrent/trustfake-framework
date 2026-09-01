@@ -81,7 +81,10 @@ class _RowsDataset(Dataset):
     def __getitem__(self, index: int):
         row = self.rows[index]
         try:
-            with Image.open(io.BytesIO(row["image"])) as pil:
+            source = (
+                io.BytesIO(row["image"]) if row.get("image") is not None else row["path"]
+            )
+            with Image.open(source) as pil:
                 measured = {
                     "width": int(pil.width),
                     "height": int(pil.height),
@@ -141,7 +144,7 @@ def _index_table(rows: list[dict[str, Any]], metas: dict[int, dict[str, Any]], d
     }
     extra_keys = sorted(
         set().union(*(set(r) for r in rows))
-        - {"image", *columns.keys()}
+        - {"image", "path", *columns.keys()}
     )
     for key in extra_keys:
         columns[key] = []
