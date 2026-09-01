@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from trustfake.curation import embed as E
+from trustfake.curation import embed as embed_module
 
 DATA = Path(os.environ["DATA_PATH"])
 OUT = Path(os.environ["OUTPUT_PATH"]) / "tb_e4" / "features_qf85"
@@ -43,7 +43,7 @@ def main():
     from trustfake.curation import readers
 
     readers.READERS["tb_e4_pairs"] = lambda data_dir: _iter_manifest(data_dir)
-    E.embed_dataset("tb_e4_pairs", data_dir=DATA, out_dir=OUT, num_workers=6)
+    embed_module.embed_dataset("tb_e4_pairs", data_dir=DATA, out_dir=OUT, num_workers=6)
     print("EMBED_PAIRS_COMPLETE")
 
 

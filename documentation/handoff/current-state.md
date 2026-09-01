@@ -2,72 +2,69 @@
 type: handoff
 title: Track A / Track B state, and how to resume
 status: current
-as_of: 2026-08-31
-source: "run live on the 3090 box 2026-08-31"
-tags: [experiments, track-a, track-b]
-links: [ood-thresholds-come-from-in-domain-calib, track-a-and-track-b-are-separate-tables, clip-backbone-fixes-cross-dataset, 2026-08-31-track-b-first-results]
+as_of: 2026-09-01
+source: "TB-E3 executed end-to-end on the 3090 box, 2026-09-01 (branch claude/tb-e3-curation-ladder-255c6d)"
+tags: [experiments, track-a, track-b, tb-e3]
+links: [specs/tb-e3-curation-ladder, 2026-09-01-tb-e3-curation-ladder, decisions/tb-e3-mapping-is-strict-drop, 2026-09-01-backbone-grid]
 ---
 
 # Where we are
 
-**Track A (robustness, ResNet-18 EV-AT ladder) is being run by colleagues**, not here. Seven
-trained arms exist in `_runs/out/` with ~90 evaluation conditions. Its one real gap is that
-`query_overconf`/`query_underconf` were never run on the five EV-AT arms — `jobs/premise_test.sh`
-does exactly that and appears to have stopped after two arms.
+**Track A (ResNet-18 EV-AT ladder)** — colleagues' lane, unchanged. Its transfer failure is
+now better understood: TB-E3 showed the data was the lever, so re-running EV-AT arms on the
+winning composition is the natural (conversation-first) follow-up.
 
-**Track B (does a foundation backbone generalise?) is the active work here.** Built and merged
-to `main` on 2026-08-31: a FakeClue datamodule with an identity firewall, a So-Fake-OOD
-datamodule, `CLIPProbeClassifier`, `BinaryFoldClassifier`, and `jobs/track_b_chain.sh`.
+**Track B — TB-E3 (the curation ladder) EXECUTED 2026-09-01**, same-day registration to
+verdicts. Everything below happened on branch `claude/tb-e3-curation-ladder-255c6d` (pushed;
+merge to main pending review).
 
-## What changed
+## What exists now
 
-- `main` is at the merge of the Track B work; both the Mac and the box are in sync via
-  `origin/main`. 794 tests, ruff clean, verified on both machines.
-- `open_clip_torch` is installed in the box's `.venv` (torch stayed 2.5.1+cu124).
-- Evaluation data is on the box: FakeClue (1.2 GB) and two So-Fake-OOD shards (5.5 GB).
-- Results are backed up: `_runs/backups/out-20260831-1856.tar.gz` (1.7 GB, 1246 files,
-  integrity-checked). `_runs/` is **untracked by git** — that archive is the only copy besides
-  the live tree, and it sits on the same ZFS pool.
+- **Nine datasets ingested, embedded once, G4-verified** (~1.5M cached rows under
+  `_runs/out/tb_e3/features/`): SID-Set, So-Fake-OOD, CommunityForensics-Small, AUDITS,
+  Synthbuster, VISION, IMD2020, TGIF/TGIF2, SAGI-D. GenImage deferred (spec change log);
+  NIST MFC / Chameleon / RAISE still need the human emails/forms.
+- **Frozen legs** (`tb_e3/legs/`): L1 22,941 / L2 3,998 / L3 9,000 (DALL·E 3, Midjourney v5,
+  Firefly) / L4 115,377 (AUDITS PowerPaint + TGIF ps-sp).
+- **48 ladder fits + heads** (`tb_e3/fits/*.pt`), phase-2 heads (`tb_e3/phase2/`), FARE
+  column + 8/255 battery (`tb_e3/hardening/`). Backups:
+  `_runs/backups/tb_e3-results-20260901-*.tar.gz`.
+- Tooling: `src/trustfake/curation/` + `src/curate.py` + `jobs/tb_e3/` (all lint-clean,
+  794 tests green).
 
-## Next steps
+## The verdicts (snapshots/2026-09-01-tb-e3-curation-ladder.md has the tables)
 
-1. **The chain is complete** — all six steps, 2026-08-31 20:00. Numbers are in
-   [[snapshots/2026-08-31-track-b-first-results]].
-2. The result that should drive the next run: under shift the two models fail on **opposite
-   classes** — the CLIP probe finds synthetic (recall 0.7928) and misses tampered (0.0503); the
-   ResNet misses synthetic (0.0055) and does better on tampered (0.2725). That makes multi-dataset
-   (or multi-backbone) training a *directed* hypothesis rather than a guess.
-3. Still unbuilt: a combined SID-Set + FakeClue datamodule, and the decision about how FakeClue's
-   binary fakes map into the 3-class space.
-4. Worth trying with a measured reason now: **ViT-B/16**. The patch-32 low-pass hypothesis was
-   false in-domain but the tampered collapse under shift reinstates it — see
-   [[clip-low-pass-destroys-tampered]].
+- **H1 mixed, leg-resolved**: matching buys L2 +0.087 / L3 +0.031 (30x seed noise; bigger at
+  matched size) and costs L4 -0.114 — nuisance overlap and paired-contrast mass are competing
+  resources. **H2**: strict-drop mapping (tie rule; decisions leaf written). **H3**: k-center
+  coreset beats random on 3/3 shifted legs. **H4**: no invariance objective adopted; both
+  repair ~+0.09 of C2's L4 damage (directed follow-up).
+- Hardening cells: FARE4-B/16's clean tax survives curation on every leg; the winner's
+  confidence axis HELD under the 400-query black-box attack at 8/255 but PGD white-box
+  demolishes it — the argument for a custom 8/255 encoder fine-tune stands.
 
-## Blockers
+## Next steps, in leverage order
 
-None hard. Multi-dataset training needs a combined datamodule plus a decision on how FakeClue's
-binary fakes map into the 3-class space; the colleague's `combined.py` folds them into
-*synthetic*, which muddies the tampered/synthetic separation this project works to preserve.
+1. **Merge the branch** (PR from `claude/tb-e3-curation-ladder-255c6d`).
+2. **Tampered-axis curation** — the L4 result says tampered needs paired contrasts, not
+   nuisance matching: design the C2' variant that matches within-pair instead of dropping
+   pairs (new spec).
+3. **EV-AT / hardening on the winning composition** (talk to the Track A colleague first;
+   new table per the separate-tables decision). The 8/255 defender still requires a custom
+   encoder fine-tune.
+4. **Backbone column** (L/14, DINOv2) over the same frozen legs and arms — cheap re-embeds.
+5. RAISE-1k (form) would upgrade L3's negatives; SAGI-D admission note: its PowerPaint rows
+   are already excluded (L4 conflict).
 
-## How to resume, from the box, without SSH
-
-Claude Code 2.1.233 is installed at `~/.local/bin/claude` and authenticated. From
-`~/Desktop/FILES/PROJECTS/trustfake/framework`:
-
-```bash
-git pull                      # pick up this brain and any fixes
-~/.local/bin/claude           # interactive, with this documentation/ as context
-```
-
-Chain control:
+## How to resume, from the box
 
 ```bash
-LOGS=$(grep ^LOGS_PATH .env | cut -d= -f2)/track_b
-cat $LOGS/chain.log           # step-by-step progress
-ls $LOGS/*.done               # completed steps
-bash jobs/track_b_chain.sh    # resume; completed steps skip
-rm $LOGS/<step>.done          # force ONE step to re-run
+cd ~/Desktop/FILES/PROJECTS/trustfake/framework
+git fetch && git checkout claude/tb-e3-curation-ladder-255c6d
+set -a; . ./.env; set +a
+PYTHONPATH=$PWD/src .venv/bin/python src/curate.py ladder   # resumes: every fit is a marker
 ```
 
-`.done` markers make the chain resumable, but they also mean a step that *succeeded with a bad
-number* will be skipped on rerun — delete its marker to redo it.
+Chain logs: `${LOGS_PATH}/tb_e3/` (fetch/, embed/, ladder.log, phase2.log, harden_fare.log,
+attacks.log). Every stage is marker-gated and resumable; a step that succeeded with a bad
+number is re-done by deleting its marker/JSON.
