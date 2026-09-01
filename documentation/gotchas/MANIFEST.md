@@ -9,3 +9,4 @@ Every one of these produces a plausible wrong number rather than an error.
 - [binary-fold-goes-after-checkpoint-load.md](binary-fold-goes-after-checkpoint-load.md) — wrapping first prefixes state_dict keys with `inner.` and the load silently mismatches
 - [clip-normalization-lives-in-the-model.md](clip-normalization-lives-in-the-model.md) — a datamodule Normalize on top double-normalizes with no error and no shape change
 - [gpu-concurrency-is-negative-on-this-box.md](gpu-concurrency-is-negative-on-this-box.md) — two jobs are slower than one; run evaluations sequentially
+- [fakeclue-train-and-test-share-every-identity.md](fakeclue-train-and-test-share-every-identity.md) — 100% of test identities appear in train; the published splits are contaminated

@@ -342,9 +342,18 @@ def clip_probe(
     """
     import open_clip
 
-    model, _, _ = open_clip.create_model_and_transforms(
-        model_name, pretrained=pretrained
-    )
+    # A Hub tag ("hf-hub:org/repo") carries its own architecture and weights in
+    # one identifier, so open_clip takes it as the MODEL NAME and rejects it as
+    # a `pretrained` tag. That is the loading path for the adversarially
+    # robustified encoders (chs20/FARE4-*, chs20/TeCoA4-*), which are the point
+    # of allowing it: they share architecture and pretraining with the standard
+    # backbone, so swapping one in changes the representation and nothing else.
+    if model_name.startswith("hf-hub:"):
+        model, _, _ = open_clip.create_model_and_transforms(model_name)
+    else:
+        model, _, _ = open_clip.create_model_and_transforms(
+            model_name, pretrained=pretrained
+        )
     visual = model.visual
     feature_dim = int(getattr(visual, "output_dim", 512))
     logger.info(

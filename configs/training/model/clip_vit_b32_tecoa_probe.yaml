@@ -1,0 +1,28 @@
+name: clip_vit_b32_tecoa_probe
+model:
+  _target_: trustfake.models.torch.clip_probe
+  num_classes: 3
+  model_name: hf-hub:chs20/TeCoA4-ViT-B-32-laion2B-s34B-b79K
+  pretrained: null
+  freeze_backbone: true
+  normalize_features: true
+
+# TeCoA4 ViT-B/32 -- a DIFFERENT robustification objective from FARE at the
+# same architecture and base. FARE is unsupervised (hold embeddings stable
+# under attack); TeCoA is supervised against text prototypes. If the two
+# behave alike on the confidence axis, the effect belongs to adversarial
+# fine-tuning in general rather than to one method.
+#
+# Part of the 2x2 that separates PATCH SIZE from ROBUSTNESS:
+#
+#            standard                    FARE4 (adv. fine-tuned, eps=4/255)
+#   B/32     clip_vit_b32_probe          clip_vit_b32_fare_probe
+#   B/16     clip_vit_b16_probe          clip_vit_b16_fare_probe
+#
+# Both B/16 arms share the laion2B-s34B-b88K base, and both B/32 arms share
+# laion2B-s34B-b79K, so each column is a controlled comparison. Without the
+# standard B/16 arm, any B/16 result confounds the finer patch grid with the
+# robustification -- which is the whole question.
+#
+# REQUIRED: datamodule `normalization_layer: null` (the encoder normalizes
+# internally). Read the per-modality rows, not mean accuracy.

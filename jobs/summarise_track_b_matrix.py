@@ -123,16 +123,27 @@ def main() -> None:
         for m in sorted(missing):
             print(f"- {m}")
 
-    # The single comparison the array exists to make.
+    # The single comparison the array exists to make. Reported at the WORST
+    # of the two confidence attacks, not just query_overconf: underconf turned
+    # out to be by far the stronger of the pair (Phi 0.8284 -> 0.4837 vs
+    # -> 0.7926 for the CLIP probe in-domain), so summarising overconf alone
+    # understates the vulnerability by a factor of ten.
     print("\n## Confidence axis: does accuracy hold while Phi moves?\n")
-    print("| model | dataset | acc clean -> attacked | Phi clean -> attacked |")
-    print("|---|---|---|---|")
+    print("Worst of query_overconf / query_underconf per cell.\n")
+    print("| model | dataset | acc clean -> attacked | Phi clean -> attacked | via |")
+    print("|---|---|---|---|---|")
     for model in ("clip_probe", "resnet"):
         for dataset in DATASETS:
             c = cells.get((model, dataset, "clean"))
-            a = cells.get((model, dataset, "query_overconf"))
-            if not c or not a:
+            candidates = {
+                k: cells.get((model, dataset, k))
+                for k in ("query_overconf", "query_underconf")
+            }
+            candidates = {k: v for k, v in candidates.items() if v and "fd_auroc" in v}
+            if not c or not candidates:
                 continue
+            worst = min(candidates, key=lambda k: candidates[k]["fd_auroc"])
+            a = candidates[worst]
 
             # c/a passed explicitly rather than closed over: a closure over a
             # loop variable is a late-binding bug waiting for someone to move
@@ -142,7 +153,10 @@ def main() -> None:
                     return "—"
                 return f"{clean[key]:.4f} -> {attacked[key]:.4f}"
 
-            print(f"| {model} | {dataset} | {fmt('accuracy')} | {fmt('fd_auroc')} |")
+            print(
+                f"| {model} | {dataset} | {fmt('accuracy')} | "
+                f"{fmt('fd_auroc')} | {worst} |"
+            )
 
 
 if __name__ == "__main__":

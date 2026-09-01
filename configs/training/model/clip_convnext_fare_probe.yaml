@@ -1,0 +1,25 @@
+name: clip_convnext_fare_probe
+model:
+  _target_: trustfake.models.torch.clip_probe
+  num_classes: 3
+  # FARE4 on convnext_base_w -- the only NON-ViT robust CLIP encoder chs20
+  # published, and the reason to run it is mechanistic rather than "a fourth
+  # backbone". A CNN has no patch projection at all, so it tests the claim in
+  # the frozen-vs-fitted analysis that ViT-B/32's 768x3072 patch embedding is
+  # what destroys the local high-frequency evidence the tampered class lives
+  # in. If tampered recall holds here where it collapsed at B/32 (0.0503 OOD),
+  # the patch grid is the mechanism. If it collapses here too, it is not.
+  model_name: hf-hub:chs20/FARE4-convnext_base_w-laion2B-s13B-b82K-augreg
+  pretrained: null
+  freeze_backbone: true
+  normalize_features: true
+
+# PROTOCOL DIFFERENCE, must be stated in any table: this encoder expects
+# image_size 256, not 224. Run it with datamodule.datamodule.image_size=256 --
+# and note that its numbers therefore sit under a different input protocol than
+# every ViT arm, the same way input_mode=crop does.
+#
+# Also: embed_dim is 640 here, not 512. clip_probe reads visual.output_dim, so
+# the head sizes itself; nothing to configure, but do not assume 512 anywhere.
+#
+# REQUIRED as with every CLIP arm: datamodule `normalization_layer: null`.
