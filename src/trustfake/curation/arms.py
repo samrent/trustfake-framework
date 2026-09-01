@@ -175,57 +175,85 @@ def _nuisance_axes(index: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _match_marginals(pool: pd.DataFrame, seed: int) -> pd.DataFrame:
-    """C2: equalize per-axis nuisance MARGINALS across classes, per environment.
+def _nuisance_matrix(rows: pd.DataFrame) -> np.ndarray:
+    """The G1 feature matrix (identical construction to gates.g1_metadata_auroc)."""
+    w = rows["width"].to_numpy(dtype=np.float64)
+    h = rows["height"].to_numpy(dtype=np.float64)
+    q = pd.to_numeric(rows["jpeg_q"], errors="coerce").to_numpy(dtype=np.float64)
+    return np.column_stack(
+        [w, h, w / h, np.log(w * h), (w == h).astype(np.float64), q,
+         np.isnan(q).astype(np.float64)]
+    )
 
-    Sequential per-axis matching (two rounds), NOT joint-bin matching. The
-    joint variant was measured on the smoke pool and retained 3% of rows:
-    class and nuisance are so entangled (CF fakes PNG-native, its reals
-    mostly JPEG -- CASIA's lesson at pool scale) that exact joint cells are
-    nearly disjoint across classes, and the arm degenerates into a small-n
-    experiment instead of a curation one. The spec's own wording is
-    "matched nuisance marginals"; per-axis quotas (min across classes per
-    axis bin, re-balanced over two rounds) equalize each marginal while
-    keeping the arm at usable scale. The arbiter of whether the matching
-    actually killed the shortcut is G1 re-run on the arm -- recorded with
-    every fit -- not the matching procedure itself.
+
+def _match_marginals(pool: pd.DataFrame, seed: int) -> pd.DataFrame:
+    """C2: propensity-stratified nuisance matching, per environment.
+
+    Two exact-matching schemes were measured on the smoke pool and both
+    annihilate it -- joint 5-axis cells keep 3%, sequential per-axis
+    min-quotas keep 0.5% -- because class-conditional nuisance
+    distributions barely overlap (CF fakes PNG-native vs JPEG-heavy reals:
+    CASIA's lesson at pool scale). The standard resolution is to match on
+    the PROPENSITY: per environment, fit the G1 nuisance classifier
+    (out-of-fold, seeded), stratify rows into deciles of predicted p(fake),
+    and equalize class counts within each stratum. Matching on the
+    propensity balances every covariate the G1 model reads, and retains
+    the entire overlap region rather than the intersection of exact cells.
+    The arbiter of whether the shortcut actually died stays G1 re-run on
+    the finished arm, recorded with every fit.
+
+    Environments with a single class pass through untouched; an
+    environment whose classes share no stratum keeps nothing, which is
+    the dataset saying its labels are nuisance-separable outright.
     """
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    from sklearn.model_selection import StratifiedKFold, cross_val_predict
+
     rng = np.random.default_rng(seed)
-    axes = _nuisance_axes(pool)
     kept_positions: list[np.ndarray] = []
-    for _env, env_rows in pool.groupby("dataset"):
+    for env, env_rows in pool.groupby("dataset"):
         classes = env_rows["label3"].unique()
         if len(classes) < 2:
             kept_positions.append(env_rows.index.to_numpy())
             continue
-        working = env_rows.index.to_numpy()
-        for _round in range(2):
-            for axis in ("format", "qband", "sideband", "square", "resample"):
-                frame = pool.loc[working, ["label3"]].assign(
-                    bin=axes.loc[working, axis]
-                )
-                surviving: list[np.ndarray] = []
-                for _bin_value, bin_rows in frame.groupby("bin"):
-                    counts = bin_rows["label3"].value_counts()
-                    quota = int(counts.reindex(classes).fillna(0).min())
-                    if quota == 0:
-                        continue
-                    for _, class_rows in bin_rows.groupby("label3"):
-                        positions = class_rows.index.to_numpy()
-                        if positions.size > quota:
-                            positions = rng.choice(
-                                positions, size=quota, replace=False
-                            )
-                        surviving.append(np.sort(positions))
-                working = (
-                    np.sort(np.concatenate(surviving))
-                    if surviving
-                    else np.empty(0, dtype=np.int64)
-                )
-        logger.info(
-            f"C2 matching [{_env}]: kept {working.size} of {len(env_rows)} rows"
+        x = _nuisance_matrix(env_rows)
+        # The propensity target: real-vs-fake where both exist, else the
+        # binary split between the two fake modalities.
+        target = (
+            env_rows["label_bin"]
+            if env_rows["label_bin"].nunique() > 1
+            else (env_rows["label3"] == 2).astype(int)
+        ).to_numpy()
+        propensity = cross_val_predict(
+            HistGradientBoostingClassifier(random_state=seed),
+            x,
+            target,
+            cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=seed),
+            method="predict_proba",
+        )[:, 1]
+        edges = np.unique(np.quantile(propensity, np.linspace(0, 1, 11)))
+        strata = np.digitize(propensity, edges[1:-1]) if edges.size > 2 else (
+            np.zeros(len(env_rows), dtype=int)
         )
-        kept_positions.append(working)
+        surviving: list[np.ndarray] = []
+        frame = env_rows.assign(stratum=strata)
+        for _stratum, stratum_rows in frame.groupby("stratum"):
+            counts = stratum_rows["label3"].value_counts()
+            quota = int(counts.reindex(classes).fillna(0).min())
+            if quota == 0:
+                continue
+            for _, class_rows in stratum_rows.groupby("label3"):
+                positions = class_rows.index.to_numpy()
+                if positions.size > quota:
+                    positions = rng.choice(positions, size=quota, replace=False)
+                surviving.append(np.sort(positions))
+        kept = (
+            np.sort(np.concatenate(surviving))
+            if surviving
+            else np.empty(0, dtype=np.int64)
+        )
+        logger.info(f"C2 matching [{env}]: kept {kept.size} of {len(env_rows)} rows")
+        kept_positions.append(kept)
     keep = np.sort(np.concatenate(kept_positions))
     logger.info(f"C2 matching: kept {keep.size} of {len(pool)} rows")
     return pool.loc[keep]

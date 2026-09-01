@@ -215,12 +215,14 @@ gate could not be satisfied for a dataset, that dataset's exclusion is recorded 
   filter: any row whose generator mentions PowerPaint (pure or in a combo, ~18.6k rows)
   is excluded from every arm. RAISE-lineage overlap is left to G2. ArtiFact stays out
   (optional in R1; 200 px pre-JPEG'd, low marginal value beside CF-Small).
-- 2026-09-01 (pre-fit amendment, from the scratch smoke run) — **C2 is per-axis marginal
-  matching, not joint-cell matching.** Joint cells retained 3% of the smoke pool (class and
-  nuisance nearly disjoint: CF fakes PNG-native vs JPEG-heavy reals), degenerating C2-C5
-  into one small-n arm. The spec's wording ("matched nuisance marginals") is implemented
-  literally: sequential per-axis quotas (format, JPEG-quality band, min-side band,
-  squareness, resample direction; two rounds), per environment; G1 re-run on the arm is the
-  arbiter of whether the shortcut actually died. Amended BEFORE any official fit; the smoke
-  run also caught and fixed two cache-key collisions (CF image_name reuse, AUDITS NEWS/COCO
-  id overlap) and AUDITS' COCO zero-padded filenames.
+- 2026-09-01 (pre-fit amendment, from the scratch smoke run) — **C2 is propensity-stratified
+  matching.** Both exact schemes were measured on the smoke pool and annihilate it — joint
+  5-axis cells keep 3%, sequential per-axis min-quotas keep 0.5% (SID-Set to zero) — because
+  class-conditional nuisance distributions barely overlap (CF fakes PNG-native vs JPEG-heavy
+  reals: CASIA's lesson at pool scale; itself a headline observation about naive pooling).
+  Final scheme, standard in causal matching: per environment, fit the G1 nuisance classifier
+  out-of-fold, stratify into deciles of predicted propensity, equalize class counts within
+  strata — balances every covariate G1 reads while retaining the whole overlap region. The
+  arbiter of shortcut death stays the per-arm G1 re-run recorded with every fit. Amended
+  BEFORE any official fit; the smoke run also caught two cache-key collisions (CF image_name
+  reuse, AUDITS NEWS/COCO id overlap) and AUDITS' COCO zero-padded filenames.
