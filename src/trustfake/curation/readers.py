@@ -213,9 +213,10 @@ def _iter_audits(data_dir: Path) -> Iterator[tuple[str, Rows]]:
             kind = "original" if authentic else "manipulated"
             relative = f"{prefix}/{record.manipulation_type}/{kind}/{record.id}.jpg"
         path = data_dir / relative
+        uid = f"audits:{record.training}:{record.manipulation_type}:{record.id}"
         rows.append(
             {
-                "uid": f"audits:{record.training}:{record.manipulation_type}:{record.id}",
+                "uid": uid,
                 "path": str(path),
                 "label3": 0 if authentic else 2,
                 "label_bin": int(not authentic),
