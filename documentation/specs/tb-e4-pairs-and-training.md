@@ -107,3 +107,12 @@ iteration happens on internal dev legs, held out of training here and now:
   trades away black-box confidence stability. Arm C not run (Arm B finished 00:54, battery
   till ~03:00; schedule fact). sagi_d/tgif G1-excluded as registered. Numbers:
   snapshots/2026-09-02-tb-e4-pairs-and-training.md.
+- 2026-09-02 (user-directed amendment) — **Arm C promoted from conditional to required**: the
+  deployment story is pointless without a hardened arm (user, same morning). Recipe as
+  registered (PGD-3 at 8/255, alpha 2.5*eps/3, 2 epochs from Arm B's best checkpoint), lrs
+  halved (backbone 5e-6 / head 5e-4, cosine over the 2 epochs), flip-then-attack, training on
+  adversarial examples only (Madry). Selection unchanged (clean dev mean). Pre-committed
+  adoption rule, written before the run: **Arm C replaces Arm B as the deployment candidate
+  iff PGD-40 accuracy >= 0.40 AND query_underconf fd_auroc >= 0.65, with every shifted-leg
+  detection_auroc within 0.05 of Arm B's.** Otherwise the frontier is reported and the
+  decision goes to the PI.
