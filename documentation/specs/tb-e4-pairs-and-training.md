@@ -116,3 +116,14 @@ iteration happens on internal dev legs, held out of training here and now:
   iff PGD-40 accuracy >= 0.40 AND query_underconf fd_auroc >= 0.65, with every shifted-leg
   detection_auroc within 0.05 of Arm B's.** Otherwise the frontier is reported and the
   decision goes to the PI.
+- 2026-09-02 (Arm C readout) — **NOT adopted; catastrophic collapse, mechanism known.** Two
+  epochs of Madry PGD-3 at eps=8/255 from Arm B's checkpoint collapsed the detector to
+  near-chance everywhere (clean L2 0.504 / L1 0.524; top-1 0.35 ~ constant predictor; the
+  battery's PGD-40 "0.349" is the robustness of a collapsed model). All three adoption
+  conditions fail. The repo's own train_config annotation predicted this exact mode ("an
+  8/255 ball can erase deepfake evidence and collapse training onto a constant output —
+  warm up eps"); the registered recipe omitted the warmup. Follow-up candidates, in order:
+  (a) eps-warmup + TRADES-style objective + longer schedule (Arm C'); (b) an adversarially
+  PRE-trained backbone (DeltaCLIP, arXiv:2501.09446) as the encoder column — likely cheaper
+  than fighting the collapse from a clean checkpoint. Best deployment posture remains:
+  scores from Arm B, abstention from the frozen probe.

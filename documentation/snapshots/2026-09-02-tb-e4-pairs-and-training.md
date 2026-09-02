@@ -53,3 +53,14 @@ were read once per arm.
 Best clean-shift detector in the project: Arm B (`_runs/out/tb_e4/armB/best.pt`,
 epoch-4 CLIPProbeClassifier, unfrozen). Best confidence-robust detector: the TB-E3 C3a
 frozen probe. Nothing dominates both axes yet — that sentence is the next experiment.
+
+## Arm C readout (2026-09-02 midday): not adopted — collapse at the official budget
+
+PGD-3 AT at 8/255 from Arm B's best: clean detection L1 0.524 / L2 0.504 / L3 0.593 /
+L4 0.532; top-1 ~0.35 (constant-predictor regime). Adoption rule fails 3/3. The mechanism is
+the one the repo already documented for forensic AT at 8/255: the perturbation budget exceeds
+the evidence, and training collapses onto a constant output. The eps-warmup knob exists in the
+Track A pipes for exactly this reason and was not in the registered Arm C recipe — recipe
+error, not a fundamental negative. Registered follow-ups: warmup+TRADES (Arm C'), or the
+DeltaCLIP adversarially pre-trained backbone as a column. The axis trade stands: Arm B for
+scores, the frozen probe for abstention.
