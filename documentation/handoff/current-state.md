@@ -43,9 +43,21 @@ merge to main pending review).
   confidence axis HELD under the 400-query black-box attack at 8/255 but PGD white-box
   demolishes it — the argument for a custom 8/255 encoder fine-tune stands.
 
+## TB-E4 (overnight 2026-09-02): executed to completion
+
+Spec `specs/tb-e4-pairs-and-training.md`; numbers `snapshots/2026-09-02-tb-e4-pairs-and-training.md`.
+H5 not adopted; **H6 ADOPTED — the full fine-tune on the pair-fixed composition takes every
+shifted leg (L2 0.786 / L3 0.977 / L4 0.732, all project bests)**, but the 8/255 battery
+shows it trades away the frozen probe's black-box confidence stability (fd_auroc 0.708 ->
+0.517 under query_underconf). Best clean-shift model: `_runs/out/tb_e4/armB/best.pt`. Best
+confidence-robust model: the TB-E3 C3a frozen probe. Nothing dominates both axes yet.
+
 ## Next steps, in leverage order
 
-1. **Merge the branch** (PR from `claude/tb-e3-curation-ladder-255c6d`).
+1. **Merge the branch** (PR from `claude/tb-e3-curation-ladder-255c6d` — now carries TB-E3 AND TB-E4).
+1b. **Close the axis trade**: harden Arm B (partial-freeze or adversarial fine-tune at
+   8/255) or budget-balance the composition so one model holds both the shifted legs and
+   the confidence axis — the sentence "nothing dominates both axes" is the next spec.
 2. **Tampered-axis curation** — the L4 result says tampered needs paired contrasts, not
    nuisance matching: design the C2' variant that matches within-pair instead of dropping
    pairs (new spec).
