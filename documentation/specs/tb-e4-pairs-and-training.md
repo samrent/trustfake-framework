@@ -100,3 +100,10 @@ iteration happens on internal dev legs, held out of training here and now:
   save, making pair members resolution-identical as the spec claims. Caches wiped and the
   chain re-run from staging; the first (invalid) Arm A pass is discarded — its G1 exclusions
   were the machinery working as registered.
+- 2026-09-02 — executed to completion. H5 not adopted (wins L4 +0.062 beyond noise, loses
+  L2/L3 at probe level); H6 ADOPTED (Arm B takes all three shifted legs; L2 0.786 /
+  L3 0.977 / L4 0.732, project bests). Battery: PGD-40 0.154; query_underconf preserves
+  argmax but collapses fd_auroc to 0.517 where the frozen probe held 0.723 — fine-tuning
+  trades away black-box confidence stability. Arm C not run (Arm B finished 00:54, battery
+  till ~03:00; schedule fact). sagi_d/tgif G1-excluded as registered. Numbers:
+  snapshots/2026-09-02-tb-e4-pairs-and-training.md.
