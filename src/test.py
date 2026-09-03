@@ -1,4 +1,5 @@
 import os
+from contextlib import nullcontext
 from pathlib import Path
 
 import hydra
@@ -316,9 +317,16 @@ def run_eval_pipe(cfg: DictConfig):
                 "scaling (temperature stays 1.0)."
             )
         else:
-            temperature = calibrate_temperature(
-                eval_module.model, calib_loader(), device=resolve_device()
+            # A depth-aware wrapper scores by probability here: temperature
+            # needs logits only, and the combined score has no calib
+            # reference yet (it is fitted right after this, and would raise).
+            probability_only = getattr(
+                eval_module.model, "probability_only", nullcontext
             )
+            with probability_only():
+                temperature = calibrate_temperature(
+                    eval_module.model, calib_loader(), device=resolve_device()
+                )
             eval_module.model.temperature = temperature
             logger.info(f"Applied fitted temperature T = {temperature:.4f}")
     else:

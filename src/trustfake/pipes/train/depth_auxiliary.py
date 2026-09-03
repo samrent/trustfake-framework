@@ -147,6 +147,14 @@ class DepthAuxiliaryMixin:
                 "wrapper=base or wrapper=evidential."
             )
             raise ValueError(msg)
+        if getattr(self.model, "consumes_depth", False):
+            msg = (
+                f"{type(self).__name__} trains with a probability score; the "
+                "depth-consistency score is an evaluation-time instrument. Use "
+                "wrapper=base uncertainty_score=multiclass_max_probability for "
+                "training and wrapper=depth only in src/test.py."
+            )
+            raise ValueError(msg)
 
     @staticmethod
     def _depth_target(batch) -> Tensor:

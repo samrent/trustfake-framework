@@ -235,6 +235,25 @@ def test_mc_dropout_is_refused():
         _module(DepthStandardTrainingModule, model)
 
 
+def test_a_depth_scoring_wrapper_is_refused_for_training():
+    """Every guard passed and the first batch crashed on outputs_from_logits
+    returning None; now it is refused at construction."""
+    from trustfake.depth import FakeDepthTeacher
+    from trustfake.metrics.uncertainty import DepthConsistencyScore
+    from trustfake.models.wrapper import DepthConsistencyWrapper
+
+    torch.manual_seed(0)
+    model = DepthConsistencyWrapper(
+        normalization_layer=nn.Identity(),
+        model=_DepthNet(),
+        loss_fn=nn.CrossEntropyLoss(),
+        uncertainty_score=DepthConsistencyScore(),
+        teacher=FakeDepthTeacher(output_size=8, input_size=8, multiple=1),
+    )
+    with pytest.raises(ValueError, match="evaluation-time instrument"):
+        _module(DepthStandardTrainingModule, model)
+
+
 def test_non_positive_lambda_is_refused():
     with pytest.raises(ValueError, match="depth_lambda"):
         _module(DepthStandardTrainingModule, depth_lambda=0.0)

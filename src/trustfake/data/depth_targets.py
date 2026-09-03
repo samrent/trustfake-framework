@@ -36,7 +36,6 @@ are memory-mapped, so forked dataloader workers share pages.
 
 from __future__ import annotations
 
-import io
 import json
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -47,9 +46,9 @@ import numpy as np
 import pyarrow.parquet as pq
 import torch
 import torch.nn as nn
-from PIL import Image
 from torchvision import transforms
 
+from trustfake.data._images import decode_image_cell
 from trustfake.data.manifest import DEFAULT_MANIFEST_SEED, build_manifest
 from trustfake.logging import get_logger
 
@@ -57,6 +56,8 @@ logger = get_logger("depth-targets")
 
 __all__ = [
     "STORE_MANIFEST",
+    "DEPTH_FRAME",
+    "CHECKED_KEYS",
     "DepthTargetStore",
     "depth_target_paths",
     "read_store_manifest",
@@ -76,7 +77,15 @@ ROLE_SOURCE_SPLIT = {
     "test": "validation",
 }
 
-#: The pre-transform settings a store is tied to; the datamodule checks them.
+#: The only frame targets are stored in (see `trustfake.losses.depth`).
+DEPTH_FRAME = "median_mad"
+
+#: The settings a store is tied to and the datamodule checks against its own
+#: configuration (`SIDSetDataModule._open_depth_store`). The teacher's
+#: identity, revision and input size are recorded too, and logged by
+#: src/train.py, but the training run cannot check them against anything --
+#: the evaluation-time teacher is configured in the eval config, and
+#: jobs/track_c_depth.sh passes the same TEACHER_INPUT to both.
 CHECKED_KEYS = ("image_size", "squarecrop", "input_mode", "output_size", "frame")
 
 
@@ -217,17 +226,6 @@ class DepthTargetStore:
 # --------------------------------------------------------------------------
 
 
-def _to_pil(cell: Any) -> Image.Image:
-    """Decode one parquet image cell the way `SIDSetTorchDataset` does."""
-    if isinstance(cell, Image.Image):
-        return cell.convert("RGB")
-    if isinstance(cell, dict) and "bytes" in cell:
-        return Image.open(io.BytesIO(cell["bytes"])).convert("RGB")
-    if isinstance(cell, bytes | bytearray):
-        return Image.open(io.BytesIO(cell)).convert("RGB")
-    return Image.fromarray(np.asarray(cell, dtype=np.uint8)).convert("RGB")
-
-
 def _pre_transform(image_size: int, squarecrop: bool) -> transforms.Compose:
     """The datamodule's resize-mode view of the pixels, exactly."""
     from trustfake.data.sid_set import CentreSquareCrop
@@ -272,7 +270,7 @@ def precompute_shard(
         for start in range(0, len(images), batch_size):
             batch = torch.stack(
                 [
-                    transform(_to_pil(cell))
+                    transform(decode_image_cell(cell))
                     for cell in images[start : start + batch_size]
                 ]
             ).to(device)
@@ -336,7 +334,9 @@ def precompute_depth_targets(
     }
     if (depth_dir / STORE_MANIFEST).exists():
         existing = read_store_manifest(depth_dir)
-        check_store_manifest(existing, **{k: meta[k] for k in meta})
+        check_store_manifest(
+            existing, **{k: v for k, v in meta.items() if k != "created"}
+        )
         logger.info(f"Resuming depth-target store at {depth_dir}")
     else:
         meta["created"] = datetime.now(UTC).isoformat(timespec="seconds")

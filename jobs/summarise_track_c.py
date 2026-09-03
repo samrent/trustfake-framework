@@ -31,8 +31,12 @@ COLUMNS = [
     ("aurc", "aurc"),
     ("n_operating_points", "n_op"),
     ("recall_tampered", "rec_tam"),
-    ("moderation_residual_risk", "resid_risk"),
-    ("moderation_review_rate", "review"),
+    # The two-axis moderation indicators are the ones that READ the score
+    # (uncertainty gate on top of the p(fake) thresholds); the gate-free
+    # `moderation_*` pair is score-independent and would print the same
+    # number on every score row.
+    ("moderation_2axis_residual_risk", "resid_risk_2axis"),
+    ("moderation_2axis_review_rate", "review_2axis"),
 ]
 DATASET_LABEL = {
     "sid_set": "SID-Set (in-domain)",
@@ -49,7 +53,8 @@ SCORE_TARGET = {
 }
 VERSION_RE = re.compile(r"(/[^\s]*test_lightning_logs/version_\d+)")
 TARGET_RE = re.compile(r"_target_:\s*trustfake\.metrics\.uncertainty\.\w+\.(\w+)")
-PIPE_RE = re.compile(r"training_pipe:\s*(\w+)")
+SCORING_RE = re.compile(r"depth_attack_scoring:\s*(\w+)")
+SCORING_SUFFIX = {"_tr": "transfer", "_wb": "white_box"}
 
 
 def version_dir(cell_log: str) -> str | None:
@@ -97,13 +102,16 @@ def metrics_for(version: str, condition: str) -> dict[str, float]:
     return out
 
 
-def recorded_score(version: str) -> str | None:
+def recorded_score(version: str) -> tuple[str | None, str | None]:
+    """(uncertainty score class, depth_attack_scoring) the run recorded."""
     path = os.path.join(version, "experiment_config.yaml")
     if not os.path.exists(path):
-        return None
+        return None, None
     with open(path, errors="replace") as fh:
-        m = TARGET_RE.search(fh.read())
-    return m.group(1) if m else None
+        text = fh.read()
+    target = TARGET_RE.search(text)
+    scoring = SCORING_RE.search(text)
+    return (target.group(1) if target else None, scoring.group(1) if scoring else None)
 
 
 def gate_for(version: str) -> dict:
@@ -125,7 +133,7 @@ def fmt(value: float | None) -> str:
 def main() -> None:
     log_dir = sys.argv[1] if len(sys.argv) > 1 else "."
     cells: dict[tuple[str, str, str, str], dict[str, float]] = {}
-    gates: dict[tuple[str, str], dict] = {}
+    gates: dict[str, dict] = {}
     problems: list[str] = []
     for name in sorted(os.listdir(log_dir)):
         if not name.endswith(".log") or "__" not in name:
@@ -141,7 +149,7 @@ def main() -> None:
         if version is None:
             problems.append(f"{name[:-4]}: no version dir in its log")
             continue
-        recorded = recorded_score(version)
+        recorded, scoring = recorded_score(version)
         expected = SCORE_TARGET.get(score)
         if expected and recorded and recorded != expected:
             problems.append(
@@ -149,10 +157,22 @@ def main() -> None:
                 f"recorded {recorded} -- NOT collated"
             )
             continue
+        wanted_scoring = next(
+            (m for suf, m in SCORING_SUFFIX.items() if score.endswith(suf)), None
+        )
+        if wanted_scoring and scoring and scoring != wanted_scoring:
+            problems.append(
+                f"{name[:-4]}: key says {wanted_scoring} but the run recorded "
+                f"depth_attack_scoring={scoring} -- NOT collated"
+            )
+            continue
         cells[(arm, dataset, cond, score)] = metrics_for(version, cond)
         gate = gate_for(version)
         if gate:
-            gates[(arm, dataset)] = gate
+            # The gate is computed on the calib SOURCE, which is SID-Set's
+            # calib split for every leg (calib_datamodule=sid_set on the
+            # shifted set), so it is a property of the arm, not the dataset.
+            gates[arm] = gate
 
     arms = sorted({k[0] for k in cells})
     datasets = [d for d in DATASET_LABEL if any(k[1] == d for k in cells)]
@@ -169,21 +189,20 @@ def main() -> None:
     )
 
     if gates:
-        print("## Validity gate G2 (calib): is the residual just 1 - MSP relabelled?\n")
         print(
-            "| arm | dataset | abs rho vs 1-MSP | residual mean | residual std "
-            "| n | verdict |"
+            "## Validity gate G2: is the residual just 1 - MSP relabelled? "
+            "(computed on the SID-Set calib split for every leg)\n"
         )
-        print("|---|---|---:|---:|---:|---:|---|")
-        for (arm, dataset), g in sorted(gates.items()):
+        print("| arm | abs rho vs 1-MSP | residual mean | residual std | n | verdict |")
+        print("|---|---:|---:|---:|---:|---|")
+        for arm, g in sorted(gates.items()):
             rho = g.get("spearman_abs_residual_vs_msp")
+            threshold = g.get("degeneracy_threshold", 0.98)
             verdict = (
-                "DEGENERATE"
-                if rho is not None and rho >= g.get("degeneracy_threshold", 0.98)
-                else "independent"
+                "DEGENERATE" if rho is not None and rho >= threshold else "independent"
             )
             print(
-                f"| {arm} | {dataset} | {fmt(rho)} | {fmt(g.get('residual_mean'))} | "
+                f"| {arm} | {fmt(rho)} | {fmt(g.get('residual_mean'))} | "
                 f"{fmt(g.get('residual_std'))} | {g.get('n_calib', '--')} | {verdict} |"
             )
         print()

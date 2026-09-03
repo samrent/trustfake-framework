@@ -8,6 +8,7 @@ from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch.callbacks import ModelCheckpoint
 from omegaconf import DictConfig
 
+from trustfake.data.depth_targets import read_store_manifest
 from trustfake.depth import (
     DEFAULT_TEACHER_INPUT_SIZE,
     DEPTH_ANYTHING_V2_SMALL,
@@ -240,6 +241,17 @@ def run_train_pipe(cfg: DictConfig) -> None:
     except ValueError as e:
         logger.error(str(e))
         raise
+    if getattr(datamodule, "has_depth_targets", False):
+        # The instrument the targets came from, in the training log: the
+        # evaluation teacher (depth_teacher*, in eval_config) must match it.
+        meta = read_store_manifest(datamodule.depth_targets_dir)
+        logger.info(
+            "Depth targets from "
+            f"{meta.get('teacher')}@{meta.get('revision')} at input "
+            f"{meta.get('input_size')}, grid {meta.get('output_size')}, "
+            f"{meta.get('precision', 'unknown precision')}; evaluate with "
+            f"depth_teacher_input_size={meta.get('input_size')}."
+        )
 
     # EVERY pipe, not just the adversarial ones. If the classical baselines
     # could be selected on robustness and EV-AT / conf_reg / standard could

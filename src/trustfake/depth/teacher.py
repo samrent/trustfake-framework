@@ -132,8 +132,14 @@ class DepthTeacher(nn.Module):
         keep_aspect_ratio: See `dpt_resize_hw`.
         mean, std: Normalisation statistics applied INSIDE the module.
         eps: MAD floor of the output frame.
-        autocast: Run the backbone under float16 autocast on CUDA. The map
-            is always returned as float32 in the median/MAD frame.
+        autocast: Run the backbone under float16 autocast on CUDA. OFF by
+            default: fp16 is fine for the no-grad precompute (which opts in),
+            but a gradient taken THROUGH an fp16 teacher underflows -- the
+            per-pixel gradient of the residual is ~1e-8, below fp16's
+            subnormal floor -- so a white-box attack on the depth score
+            would silently see only the student half while the config said
+            "teacher included". The online teacher therefore runs fp32. The
+            map is always returned as float32 in the median/MAD frame.
         name: Recorded in `describe()`, so a target store can say which
             teacher produced it.
     """
@@ -148,7 +154,7 @@ class DepthTeacher(nn.Module):
         mean: tuple[float, float, float] = IMAGENET_MEAN,
         std: tuple[float, float, float] = IMAGENET_STD,
         eps: float = 1e-6,
-        autocast: bool = True,
+        autocast: bool = False,
         name: str = "custom",
         revision: str | None = None,
     ):
@@ -190,6 +196,7 @@ class DepthTeacher(nn.Module):
             "keep_aspect_ratio": self.keep_aspect_ratio,
             "output_size": self.output_size,
             "frame": self.frame,
+            "precision": "fp16-autocast" if self.autocast else "fp32",
         }
 
     def preprocess(self, x: Tensor) -> Tensor:

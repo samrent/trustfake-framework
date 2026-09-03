@@ -31,7 +31,6 @@ consumer of those loaders unpacks exactly two values.
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 from typing import Any
 
@@ -46,8 +45,10 @@ from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
 from torchvision import transforms
 
+from trustfake.data._images import decode_image_cell
 from trustfake.data.baselines import image_dims_and_format
 from trustfake.data.depth_targets import (
+    DEPTH_FRAME,
     ROLE_SOURCE_SPLIT,
     DepthTargetStore,
     check_store_manifest,
@@ -184,17 +185,14 @@ class SIDSetTorchDataset(TorchDataset[tuple[torch.Tensor, torch.Tensor]]):
         image = sample[self.image_column]
         label = int(sample[self.label_column])
 
-        if isinstance(image, Image.Image):
-            pil_image = image.convert("RGB")
-        elif isinstance(image, dict) and "bytes" in image:
-            # Raw parquet rows carry the HF Image struct {bytes, path}.
-            pil_image = Image.open(io.BytesIO(image["bytes"])).convert("RGB")
-        elif isinstance(image, torch.Tensor):
+        if isinstance(image, torch.Tensor):
             pil_image = transforms.ToPILImage()(image)
         else:
-            pil_image = Image.fromarray(np.asarray(image, dtype=np.uint8)).convert(
-                "RGB"
-            )
+            # PIL (HF-decoded), the raw HF struct {bytes, path}, or an array:
+            # one decoder, EXIF-corrected like HF's, shared with the depth
+            # precompute so a target always belongs to the pixels it is
+            # paired with.
+            pil_image = decode_image_cell(image)
 
         image_tensor = self.transform(pil_image)
         label_tensor = torch.tensor(label, dtype=torch.long)
@@ -517,6 +515,7 @@ class SIDSetDataModule(L.LightningDataModule):
             squarecrop=self.squarecrop,
             input_mode=self.input_mode,
             output_size=self.image_size // 2,
+            frame=DEPTH_FRAME,
         )
         store = DepthTargetStore(
             self.depth_targets_dir, fit_shards, ROLE_SOURCE_SPLIT["fit"]

@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
             "depth. Fine for a smoke test; a training run on them is not Track C."
         )
         teacher = FakeDepthTeacher(
-            output_size=args.size, input_size=args.teacher_input_size
+            output_size=args.size, input_size=args.teacher_input_size, autocast=True
         )
     else:
         teacher = load_depth_teacher(
@@ -119,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
             device=device,
             output_size=args.size,
             input_size=args.teacher_input_size,
+            autocast=True,  # no-grad offline pass: fp16 is fine here
         )
 
     summary = precompute_depth_targets(

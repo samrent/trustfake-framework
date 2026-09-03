@@ -95,9 +95,11 @@ ADV=("adv_eps=${ADV_EPS}" "adv_steps=${ADV_STEPS}" "adv_warmup_epochs=${WARMUP}"
 DEPTH=("model=resnet18_depth" "datamodule.datamodule.depth_targets_dir=${DEPTH_DIR}")
 
 # ---------------------------------------------------------------------------
-# 0. Smoke: the CUDA-only failure modes (deterministic-mode ops, bf16) on two
-#    batches, BEFORE any GPU time is spent on the real store. Uses a tiny
-#    store on the smoke profile with the real teacher.
+# 0. Smoke: the CUDA-only failure modes (deterministic-mode ops, bf16, the
+#    teacher gradient) BEFORE any GPU time is spent on the real store: two
+#    training batches, one full evaluation on the smoke profile (capped test
+#    split; the calib pass and the white-box FGSM through the teacher run in
+#    full), and the teacher-gradient check. Real teacher, tiny store.
 # ---------------------------------------------------------------------------
 SMOKE_DIR="${DATA_PATH}/sid_set_depth/smoke_${TEACHER_INPUT}_224"
 step "smoke__precompute" \
@@ -107,16 +109,22 @@ step "smoke__pgd_at_depth" \
   $PY src/train.py experiment.name="${TAG}_smoke" experiment.training_pipe=pgd_at_depth \
     model=resnet18_depth "datamodule.datamodule.depth_targets_dir=${SMOKE_DIR}" \
     datamodule.datamodule.profile=smoke trainer.trainer.max_epochs=1 \
-    trainer.trainer.limit_train_batches=2 trainer.trainer.limit_val_batches=1 \
+    +trainer.trainer.limit_train_batches=2 +trainer.trainer.limit_val_batches=1 \
     "dataloaders.batch_size=${BATCH}" "dataloaders.num_workers=${WORKERS}" \
     "${ADV[@]}" depth_lambda=1.0 resume=false \
   || { say "smoke FAILED: fix before spending GPU time on the store"; exit 1; }
 step "smoke__depth_score" \
   $PY src/test.py experiment.name="${TAG}_smoke" model=resnet18_depth wrapper=depth \
     uncertainty_score=depth_combined datamodule.datamodule.profile=smoke \
-    "depth_teacher_input_size=${TEACHER_INPUT}" +attack=fgsm \
-    "dataloaders.batch_size=${BATCH}" "dataloaders.num_workers=${WORKERS}" \
+    "datamodule.datamodule.limit_test=${SMOKE_LIMIT:-64}" \
+    "depth_teacher_input_size=${TEACHER_INPUT}" depth_attack_scoring=white_box \
+    +attack=fgsm "dataloaders.batch_size=${BATCH}" "dataloaders.num_workers=${WORKERS}" \
   || { say "smoke eval FAILED: fix before the chain"; exit 1; }
+# The CPU suite proves the white-box gradient in fp32 only; this proves it
+# on the device the numbers will come from.
+step "smoke__teacher_grad" \
+  $PY jobs/track_c_smoke_teacher_grad.py --input-size "$TEACHER_INPUT" \
+  || { say "smoke teacher-gradient check FAILED: the _wb cells would be mislabelled"; exit 1; }
 
 # ---------------------------------------------------------------------------
 # 1. The store for the training profile.

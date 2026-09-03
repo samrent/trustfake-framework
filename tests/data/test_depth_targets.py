@@ -243,6 +243,73 @@ def test_non_finite_teacher_output_is_refused(sid_set_dir, tmp_path):
         )
 
 
+def _exif_rotated_jpeg(width=12, height=8) -> bytes:
+    """A JPEG whose EXIF says 'rotate 90': HF datasets decodes it transposed."""
+    import io
+
+    from PIL import Image
+
+    rng = np.random.default_rng(0)
+    image = Image.fromarray(rng.integers(0, 255, (height, width, 3), dtype=np.uint8))
+    exif = image.getexif()
+    exif[Image.ExifTags.Base.Orientation] = 6
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", exif=exif.tobytes())
+    return buf.getvalue()
+
+
+def test_precompute_decodes_exactly_like_the_datamodule_including_exif(tmp_path):
+    """HF datasets applies exif_transpose on decode; a precompute that reads
+    the same bytes with a bare Image.open would pair an EXIF-rotated photo's
+    target with a differently oriented image, and the loss would keep
+    decreasing. Both sides decode through one helper; this pins it on an
+    HF-written shard with an orientation tag."""
+    from datasets import Dataset, Features, Value
+    from datasets import Image as HFImage
+
+    from trustfake.data._images import decode_image_cell
+    from trustfake.data.depth_targets import _pre_transform
+
+    data = tmp_path / "sid_set"
+    data.mkdir()
+    features = Features(
+        {"img_id": Value("string"), "label": Value("int64"), "image": HFImage()}
+    )
+
+    def rows(shard_index):
+        return {
+            "img_id": [f"img_{shard_index * ROWS + j:04d}" for j in range(ROWS)],
+            "label": [j % 3 for j in range(ROWS)],
+            "image": [
+                {"bytes": _exif_rotated_jpeg(), "path": None} for _ in range(ROWS)
+            ],
+        }
+
+    for i in range(3):
+        Dataset.from_dict(rows(i), features=features).to_parquet(
+            str(data / f"train-{i:05d}-of-00003.parquet")
+        )
+        Dataset.from_dict(rows(i), features=features).to_parquet(
+            str(data / f"validation-{i:05d}-of-00003.parquet")
+        )
+
+    depth = tmp_path / "depth"
+    precompute_depth_targets(
+        data, depth, _teacher(), profile="smoke", image_size=IMAGE_SIZE, batch_size=4
+    )
+    dm = _dm(data, depth_targets_dir=depth)
+    dm.setup()
+    image, _, target = dm.train_dataset[0]
+    # the datamodule saw the EXIF-transposed image (portrait after rotation)
+    raw = pq.read_table(data / "train-00000-of-00003.parquet", columns=["image"])
+    cell = raw.column("image").to_pylist()[0]
+    pil = decode_image_cell(cell)
+    assert pil.size == (8, 12), "EXIF orientation was not applied"
+    assert torch.equal(image, _pre_transform(IMAGE_SIZE, False)(pil))
+    # ... and its target is the teacher's map of THAT image
+    assert torch.allclose(target, _teacher()(image.unsqueeze(0))[0], atol=2e-2)
+
+
 def test_a_store_without_manifest_is_not_a_store(sid_set_dir, tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(FileNotFoundError, match=STORE_MANIFEST):

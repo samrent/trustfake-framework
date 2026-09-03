@@ -128,6 +128,7 @@ class DepthConsistencyWrapper(BaseWrapper):
             raise ValueError(msg)
         self.attack_scoring = attack_scoring
         self._attacking = False
+        self._probability_only = False
         if self.consumes_depth and not self.has_depth_head:
             msg = (
                 f"uncertainty_score={type(self.uncertainty_score).__name__} needs "
@@ -153,11 +154,27 @@ class DepthConsistencyWrapper(BaseWrapper):
         finally:
             self._attacking = previous
 
+    @contextmanager
+    def probability_only(self) -> Iterator[None]:
+        """Score by 1 - max prob regardless of the configured score. For the
+        temperature fit in `src/test.py`, which needs logits only and runs
+        BEFORE the combined score has its calib reference (an unfitted
+        combined score raises, and a fitted one would be wasted teacher
+        forwards)."""
+        previous = self._probability_only
+        self._probability_only = True
+        try:
+            yield
+        finally:
+            self._probability_only = previous
+
     @property
     def scoring_by_probability(self) -> bool:
         """True when this forward's 4th element is 1 - max prob."""
-        return not self.consumes_depth or (
-            self._attacking and self.attack_scoring == "transfer"
+        return (
+            not self.consumes_depth
+            or self._probability_only
+            or (self._attacking and self.attack_scoring == "transfer")
         )
 
     def _probability_forward(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
@@ -184,6 +201,7 @@ class DepthConsistencyWrapper(BaseWrapper):
                     self.teacher_name,
                     revision=self.teacher_revision,
                     input_size=self.teacher_input_size,
+                    autocast=False,  # fp32 online: gradients must survive
                 ),
             )
         return self._teacher

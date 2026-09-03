@@ -21,7 +21,7 @@ tampered recall (`snapshots/2026-09-01-*`). TB-E3, the curation ladder, is regis
 waiting (`specs/tb-e3-curation-ladder.md`).
 
 **Track C (does monocular depth add value?) is BUILT, TESTED ON THE MAC, and NOT RUN.** Branch
-`claude/depth-auxiliary-robustness-track-b98707`, commits in reviewable steps; 916 tests and
+`claude/depth-auxiliary-robustness-track-b98707`, commits in reviewable steps; 922 tests and
 ruff green. The spec with pre-registered decision rules is `specs/track-c-depth-auxiliary.md`;
 the executable runbook is `jobs/track_c_depth.sh`. Design decisions in
 `decisions/depth-head-lives-in-the-model-group.md`.

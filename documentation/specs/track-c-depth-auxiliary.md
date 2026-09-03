@@ -51,7 +51,10 @@ depth consistency beat max-prob as a rejection score under attack.
   `5426e4f0f36572d16453bbda7a8389317b1bef99`, frozen (`requires_grad_(False)`, never `no_grad`
   around the student). Its own preprocessing lives inside `trustfake.depth.DepthTeacher`: the
   checkpoint's resize rule (224 → 518, sides a multiple of 14), ImageNet mean/std, bicubic. The
-  datamodule never normalises for it.
+  datamodule never normalises for it. Precision: fp16 autocast for the offline precompute
+  (no gradient), fp32 online — a gradient through an fp16 teacher underflows, and a white-box
+  attack would silently see the student half only. Images are decoded EXIF-corrected exactly as
+  HF datasets decodes them for the datamodule (`trustfake.data._images`).
 - **Frame:** zero-median / unit-mean-absolute-deviation per image (`trustfake.losses.depth`),
   one implementation shared by the precomputed targets, the training loss and the score. A
   constant prediction scores exactly 1.0. The median is sort-based (see the determinism gotcha).
@@ -102,9 +105,13 @@ class with a lazily built teacher; `AttackResult` has no field for the achieved 
   `depth_calib_gate.json` beside the metrics; the collator prints a verdict per arm.
 - **G3 (clean floor):** an arm below 0.75 clean accuracy is a broken fit, not a result.
 - **G4 (collapse):** `nat_n_operating_points ≥ 32` for the scored condition.
-- **G5 (smoke):** `jobs/track_c_depth.sh` runs two batches of `pgd_at_depth` and one depth-score
-  evaluation under the real trainer config before any store time is spent — the CUDA-only
-  determinism failures cannot be seen on the Mac.
+- **G5 (smoke):** before any store time is spent, `jobs/track_c_depth.sh` runs, on the smoke
+  profile with the real teacher: two training batches of `pgd_at_depth` under the real trainer
+  config (deterministic, bf16-mixed); one full `depth_combined` evaluation with white-box FGSM
+  (calib pass, gate, temperature; test split capped to `SMOKE_LIMIT=64`); and
+  `jobs/track_c_smoke_teacher_grad.py`, which proves on the device that the white-box gradient
+  reaches the input THROUGH the teacher. The CUDA-only failure modes (deterministic-mode ops,
+  fp16 gradient underflow through the teacher) cannot be seen on the Mac.
 
 ## Arms
 
@@ -122,7 +129,9 @@ result gets seeds, not a softened rule.
 ## Metrics per cell
 
 `accuracy`, `fd_auroc` (Φ), `aurc`, `n_operating_points`, `recall_tampered`,
-`moderation_residual_risk`, `moderation_review_rate`; per arm the G2 correlation.
+`moderation_2axis_residual_risk`, `moderation_2axis_review_rate` (the two-axis indicators are
+the ones that read the score; the gate-free `moderation_*` pair is score-independent); per arm
+the G2 correlation.
 
 ## Decision rules — written before the first fit
 
@@ -158,3 +167,8 @@ scorings, G1–G5 recorded, and H(a)–H(d) each answered with a number or "not 
 ## Change log
 
 - 2026-09-03 — registered with the implementation; no run yet.
+- 2026-09-03 — adversarial review of the diff (4 reviewers, 3 refuters per finding): fixed the
+  smoke step's Hydra override, temperature scaling on an unfitted combined score, fp16 teacher
+  gradient underflow (online teacher now fp32), EXIF-inconsistent precompute decoding, a
+  training-time wrapper/arm combination that crashed on the first batch, and the collator's
+  score-independent moderation columns and mislabelled gate rows.

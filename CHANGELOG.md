@@ -41,9 +41,17 @@ its tests and the chain script exist so the 3090 box can run the matrix.
   `deterministic: true`; the frame uses a sort-based lower median and the
   head upsamples nearest+conv, each pinned by a spy test. The chain's first
   step is a two-batch GPU smoke.
+- **Caught by review before the first GPU run:** the online teacher runs
+  fp32 (a gradient through an fp16 teacher underflows and a white-box attack
+  would silently see only the student half); the precompute decodes images
+  EXIF-corrected exactly as HF datasets does for the datamodule, through one
+  shared decoder; temperature scaling runs the depth wrapper in a
+  probability-only context so the unfitted combined score is never scored;
+  a depth arm refuses a depth-scoring wrapper at training time.
 - `transformers` declared (lazy import; the suite uses a stub teacher).
-  `jobs/track_c_depth.sh`, `jobs/precompute_depth_targets.sh`,
-  `jobs/summarise_track_c.py`. 916 unit tests (was 794).
+  `jobs/track_c_depth.sh` (with a three-part GPU smoke, including a
+  teacher-gradient check), `jobs/precompute_depth_targets.sh`,
+  `jobs/summarise_track_c.py`. 922 unit tests (was 794).
 
 **Making the tampered-class failure measurable.** The class the detector
 struggles with is the tampered third of SID-Set, and until now the harness

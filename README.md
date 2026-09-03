@@ -459,7 +459,8 @@ maps are precomputed once, keyed by the manifest's uid, and the datamodule
 refuses a store that was computed on a different view of the pixels:
 
 ```bash
-.venv/bin/python src/precompute_depth.py --profile train      # once, on the GPU box
+.venv/bin/python src/precompute_depth.py --profile train \
+  --out-dir $DATA_PATH/sid_set_depth/dav2_small_518_224            # once, on the GPU box
 python src/train.py experiment.name=c_pgd_at_depth experiment.training_pipe=pgd_at_depth \
   model=resnet18_depth datamodule.datamodule.depth_targets_dir=$DATA_PATH/sid_set_depth/dav2_small_518_224 \
   adv_eps=0.03137 adv_steps=7 adv_warmup_epochs=2 depth_lambda=1.0

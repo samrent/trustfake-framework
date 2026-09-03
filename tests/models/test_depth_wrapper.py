@@ -214,6 +214,39 @@ def test_transfer_mode_scores_by_probability_only_while_attacking():
         _wrap(DepthConsistencyScore(), attack_scoring="grey")
 
 
+def test_temperature_scaling_works_before_the_combined_score_is_fitted():
+    """src/test.py fits temperature BEFORE the combined score's calib
+    reference exists; scoring the unfitted score raises, so the fit must run
+    in the probability-only context (logits are all it needs)."""
+    from trustfake.metrics.calibration import calibrate_temperature
+
+    teacher = _RecordingTeacher()
+    wrapper = _wrap(CombinedDepthScore(), teacher=teacher)
+    x, y = _x(n=8), torch.randint(0, NC, (8,))
+    loader = [(x, y)]
+    with pytest.raises(ValueError, match="fit_reference"):
+        calibrate_temperature(wrapper, loader)
+    calls_before = teacher.calls
+    with wrapper.probability_only():
+        t = calibrate_temperature(wrapper, loader)
+    assert t > 0 and teacher.calls == calls_before
+    assert not wrapper._probability_only
+    # the depth score is back once the context ends (fitted here to score)
+    msp, res = wrapper.score_components(x)
+    wrapper.uncertainty_score.fit_reference(msp, res)
+    assert wrapper(x)[3].shape == (8,)
+
+
+def test_online_teacher_is_loaded_without_fp16_autocast():
+    """A gradient through an fp16 teacher underflows; the wrapper must build
+    its teacher in fp32 whatever the teacher class defaults to."""
+    from trustfake.depth import FakeDepthTeacher
+
+    assert FakeDepthTeacher(output_size=4).autocast is False
+    wrapper = _wrap(DepthConsistencyScore())
+    assert wrapper.teacher.autocast is False
+
+
 def test_teacher_is_not_part_of_the_checkpoint():
     wrapper = _wrap(DepthConsistencyScore())
     assert not any("teacher" in k for k in wrapper.state_dict())

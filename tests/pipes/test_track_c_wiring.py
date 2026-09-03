@@ -167,6 +167,113 @@ def test_guard_refuses_an_untrained_head():
         )
 
 
+def _compose(config_name, overrides, monkeypatch, tmp_path):
+    from hydra import compose, initialize_config_dir
+
+    for key in ("DATA_PATH", "OUTPUT_PATH", "LOGS_PATH"):
+        monkeypatch.setenv(key, str(tmp_path))
+    with initialize_config_dir(version_base=None, config_dir=str(CONFIG_ROOT)):
+        return compose(config_name=config_name, overrides=overrides)
+
+
+def test_hydra_composes_the_chain_override_lists(monkeypatch, tmp_path):
+    """The exact override shapes jobs/track_c_depth.sh uses. A key that is
+    not in the config needs a leading plus; getting it wrong is a
+    ConfigCompositionException on the box at step zero -- which is where the
+    smoke step's limit_train_batches was caught."""
+    cfg = _compose(
+        "train_config",
+        [
+            "experiment.name=x",
+            "experiment.training_pipe=pgd_at_depth",
+            "model=resnet18_depth",
+            "datamodule.datamodule.depth_targets_dir=/tmp/store",
+            "datamodule.datamodule.profile=smoke",
+            "trainer.trainer.max_epochs=1",
+            "+trainer.trainer.limit_train_batches=2",
+            "+trainer.trainer.limit_val_batches=1",
+            "adv_eps=0.03137",
+            "adv_steps=7",
+            "adv_warmup_epochs=2",
+            "depth_lambda=1.0",
+            "resume=false",
+            "robust_val_steps=3",
+        ],
+        monkeypatch,
+        tmp_path,
+    )
+    assert cfg.model.name == "resnet18_depth" and cfg.depth_lambda == 1.0
+    assert cfg.trainer.trainer.limit_train_batches == 2
+    for overrides in (
+        [
+            "experiment.name=x",
+            "model=resnet18_depth",
+            "wrapper=depth",
+            "uncertainty_score=depth_combined",
+            "datamodule.datamodule.profile=smoke",
+            "datamodule.datamodule.limit_test=64",
+            "depth_teacher_input_size=518",
+            "depth_attack_scoring=white_box",
+            "+attack=fgsm",
+        ],
+        [
+            "experiment.name=x",
+            "model=resnet18_depth",
+            "wrapper=depth",
+            "uncertainty_score=depth_consistency",
+            "datamodule=so_fake_ood",
+            "calib_datamodule=sid_set",
+            "datamodule.datamodule.limit_test=1000",
+            "depth_attack_scoring=transfer",
+            "+corruption=jpeg",
+        ],
+    ):
+        cfg = _compose("eval_config", overrides, monkeypatch, tmp_path)
+        assert cfg.wrapper == "depth"
+
+
+def test_calib_depth_pass_fits_the_combined_score_and_writes_the_gate(tmp_path):
+    """The helper src/test.py runs between temperature and moderation: the
+    combined score comes out fitted, and the sigma-seam gate lands beside the
+    metrics as JSON."""
+    import json
+    import sys
+
+    import lightning as L  # noqa: N812
+
+    from trustfake.depth import FakeDepthTeacher
+    from trustfake.metrics.uncertainty import CombinedDepthScore
+    from trustfake.models.wrapper import DepthConsistencyWrapper
+
+    sys.argv = ["x"]
+    test_module = importlib.import_module("test")
+    torch.manual_seed(0)
+    wrapper = DepthConsistencyWrapper(
+        normalization_layer=nn.Identity(),
+        model=resnet18(num_classes=3, depth_head=True, depth_head_width=8),
+        loss_fn=nn.CrossEntropyLoss(),
+        uncertainty_score=CombinedDepthScore(),
+        teacher=FakeDepthTeacher(output_size=16, input_size=32, multiple=1),
+    )
+    eval_module = type("E", (), {"model": wrapper})()
+    trainer = type(
+        "T", (), {"loggers": [L.pytorch.loggers.CSVLogger(save_dir=str(tmp_path))]}
+    )()
+    x = torch.rand(12, 3, 32, 32)
+    y = torch.randint(0, 3, (12,))
+    gate = test_module.calib_depth_pass(
+        eval_module, [(x[:6], y[:6]), (x[6:], y[6:])], "cpu", trainer
+    )
+    assert wrapper.uncertainty_score.fitted
+    assert gate["n_calib"] == 12 and gate["residual_finite"]
+    written = json.loads(
+        (
+            tmp_path / "lightning_logs" / "version_0" / "depth_calib_gate.json"
+        ).read_text()
+    )
+    assert written["n_calib"] == 12
+
+
 def test_spearman_helper():
     import sys
 
