@@ -21,7 +21,7 @@ experiment:
   seed: 1
   training_pipe: standard
 
-wrapper: base  # base | mc_dropout | evidential
+wrapper: base  # base | mc_dropout | evidential | depth
 num_samples: 20  # number of stochastic forward passes, used when wrapper: mc_dropout
 
 # Evidential Adversarial Training (EV-AT), used when
@@ -54,6 +54,15 @@ mart_beta: 6.0        # MART: misclassification-weighted KL
 # penalty on confident mistakes. 0 reduces the arm to standard training, which
 # is the control it has to be read against.
 lambda_reg: 1.0
+
+# Track C -- auxiliary depth regularisation (experiment.training_pipe:
+# standard_depth | pgd_at_depth | trades_depth, with model=resnet18_depth and
+# datamodule.datamodule.depth_targets_dir pointing at a store written by
+# src/precompute_depth.py). Weight of the scale-and-shift-invariant depth
+# term: L = CE + depth_lambda * L_depth. Read by the depth arms only; a depth
+# arm refuses 0 (that is the parent arm with extra parameters, and would read
+# as a null result). Sweep ~0.1-1.
+depth_lambda: 1.0
 
 # Adversarial Weight Perturbation (Wu et al. 2020). A modifier, not a method:
 # it composes with every arm except `standard`, and is reported as an ablation

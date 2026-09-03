@@ -1,0 +1,6 @@
+# Track C rejection score: the per-image scale-and-shift-invariant L1 between
+# the model's own depth head and a frozen Depth Anything V2 teacher run ONLINE
+# on the same (possibly attacked) input. Needs `wrapper=depth`, a depth-trained
+# checkpoint (`model=resnet18_depth`), and no binary fold. Higher = reject.
+uncertainty_score:
+  _target_: trustfake.metrics.uncertainty.depth.DepthConsistencyScore

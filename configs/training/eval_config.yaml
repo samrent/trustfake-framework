@@ -41,8 +41,31 @@ experiment:
   name: ???
   seed: 1
 
-wrapper: base  # base | mc_dropout
+wrapper: base  # base | mc_dropout | evidential | depth
 num_samples: 20  # number of stochastic forward passes, used when wrapper: mc_dropout
+
+# Track C -- the depth-consistency rejection score (wrapper: depth). With
+# uncertainty_score=multiclass_max_probability the depth wrapper IS the base
+# wrapper; with depth_consistency or depth_combined it also runs the frozen
+# Depth Anything V2 teacher online on every input the classifier scores,
+# attacked inputs included. depth_teacher_input_size MUST equal the value the
+# training targets were precomputed with (the store's manifest.json says).
+# depth_teacher_grad keeps the autograd graph through the teacher so gradient
+# attacks on the score see the whole score; false is cheaper and makes them
+# see the student half only -- a weaker attack, say so if used.
+depth_teacher: depth-anything/Depth-Anything-V2-Small-hf
+depth_teacher_revision: 5426e4f0f36572d16453bbda7a8389317b1bef99
+depth_teacher_input_size: 518
+depth_teacher_grad: true
+# What an attack optimises against when the score is depth-aware. white_box:
+# the depth score itself, teacher included -- the honest number for "how
+# robust is this rejection score", and the expensive one (the teacher runs
+# on every attack iteration). transfer: the attack sees 1 - max prob and the
+# teacher runs only on the final perturbed batch -- "an attack crafted
+# against the classifier, scored by depth", the cheap first-pass protocol;
+# for prediction-axis attacks (pgd, square, autoattack, ...) it is identical
+# in outcome to white_box. A table must say which mode produced its numbers.
+depth_attack_scoring: white_box
 
 # Evaluation condition, reported beside clean. Add exactly ONE of:
 #   +attack=fgsm|pgd|autoattack|ace|param_ace|evidence_pgd|...
