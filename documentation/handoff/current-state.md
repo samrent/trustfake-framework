@@ -1,57 +1,70 @@
 ---
 type: handoff
-title: Track A / Track B state, and how to resume
+title: Track A / B / C state, and how to resume
 status: current
-as_of: 2026-08-31
-source: "run live on the 3090 box 2026-08-31"
-tags: [experiments, track-a, track-b]
-links: [ood-thresholds-come-from-in-domain-calib, track-a-and-track-b-are-separate-tables, clip-backbone-fixes-cross-dataset, 2026-08-31-track-b-first-results]
+as_of: 2026-09-03
+source: "Track B state from the box 2026-08-31/09-01; Track C built on the Mac 2026-09-03, not run"
+tags: [experiments, track-a, track-b, track-c]
+links: [ood-thresholds-come-from-in-domain-calib, track-a-and-track-b-are-separate-tables, depth-head-lives-in-the-model-group, specs/track-c-depth-auxiliary, 2026-09-01-track-b-full-matrix, 2026-09-01-backbone-grid]
 ---
 
 # Where we are
 
 **Track A (robustness, ResNet-18 EV-AT ladder) is being run by colleagues**, not here. Seven
-trained arms exist in `_runs/out/` with ~90 evaluation conditions. Its one real gap is that
-`query_overconf`/`query_underconf` were never run on the five EV-AT arms — `jobs/premise_test.sh`
-does exactly that and appears to have stopped after two arms.
+trained arms exist in `_runs/out/` with ~90 evaluation conditions; the `query_*` coverage gap
+on the five EV-AT arms is still open (`jobs/premise_test.sh`).
 
-**Track B (does a foundation backbone generalise?) is the active work here.** Built and merged
-to `main` on 2026-08-31: a FakeClue datamodule with an identity firewall, a So-Fake-OOD
-datamodule, `CLIPProbeClassifier`, `BinaryFoldClassifier`, and `jobs/track_b_chain.sh`.
+**Track B (does a foundation backbone generalise?)** is collated: both a CLIP probe and the
+trained ResNet sit at chance cross-dataset (`rejected/clip-backbone-fixes-cross-dataset`), FARE
+stabilises Φ under the query attack at a clean-accuracy cost, and patch size does not recover OOD
+tampered recall (`snapshots/2026-09-01-*`). TB-E3, the curation ladder, is registered and
+waiting (`specs/tb-e3-curation-ladder.md`).
 
-## What changed
+**Track C (does monocular depth add value?) is BUILT, TESTED ON THE MAC, and NOT RUN.** Branch
+`claude/depth-auxiliary-robustness-track-b98707`, commits in reviewable steps; 916 tests and
+ruff green. The spec with pre-registered decision rules is `specs/track-c-depth-auxiliary.md`;
+the executable runbook is `jobs/track_c_depth.sh`. Design decisions in
+`decisions/depth-head-lives-in-the-model-group.md`.
 
-- `main` is at the merge of the Track B work; both the Mac and the box are in sync via
-  `origin/main`. 794 tests, ruff clean, verified on both machines.
-- `open_clip_torch` is installed in the box's `.venv` (torch stayed 2.5.1+cu124).
-- Evaluation data is on the box: FakeClue (1.2 GB) and two So-Fake-OOD shards (5.5 GB).
-- Results are backed up: `_runs/backups/out-20260831-1856.tar.gz` (1.7 GB, 1246 files,
-  integrity-checked). `_runs/` is **untracked by git** — that archive is the only copy besides
-  the live tree, and it sits on the same ZFS pool.
+## What Track C consists of
 
-## Next steps
+- `trustfake.losses.depth` — the shared zero-median/unit-MAD frame and the SSI-L1 loss.
+- `trustfake.models.torch.DepthHead`; `ResNet(depth_head=True)` with `forward_with_depth`;
+  `configs/training/model/resnet18_depth.yaml`. `ResNet.forward` is bit-identical to before.
+- `trustfake.depth` — the frozen Depth Anything V2 small teacher (lazy `transformers` import,
+  its own preprocessing, pinned revision) and a stub for tests.
+- `trustfake.data.depth_targets` + `src/precompute_depth.py` — per-shard float16 store keyed by
+  manifest uid with a settings manifest; `datamodule.datamodule.depth_targets_dir` opt-in.
+- `trustfake.pipes.train.depth_auxiliary` — `standard_depth`, `pgd_at_depth`, `trades_depth`;
+  `depth_lambda`; head supervised on x_adv against the clean target; AWP ascends the joint loss.
+- `trustfake.metrics.uncertainty.depth` + `trustfake.models.wrapper.DepthConsistencyWrapper`
+  (`wrapper=depth`) — `depth_consistency` and `depth_combined` scores; `depth_attack_scoring`
+  (`white_box` | `transfer`); `src/test.py` fits the combined reference and writes the σ-seam
+  gate `depth_calib_gate.json` on the in-domain calib split.
+- `jobs/precompute_depth_targets.sh`, `jobs/track_c_depth.sh`, `jobs/summarise_track_c.py`.
 
-1. **The chain is complete** — all six steps, 2026-08-31 20:00. Numbers are in
-   [[snapshots/2026-08-31-track-b-first-results]].
-2. The result that should drive the next run: under shift the two models fail on **opposite
-   classes** — the CLIP probe finds synthetic (recall 0.7928) and misses tampered (0.0503); the
-   ResNet misses synthetic (0.0055) and does better on tampered (0.2725). That makes multi-dataset
-   (or multi-backbone) training a *directed* hypothesis rather than a guess.
-3. Still unbuilt: a combined SID-Set + FakeClue datamodule, and the decision about how FakeClue's
-   binary fakes map into the 3-class space.
-4. Worth trying with a measured reason now: **ViT-B/16**. The patch-32 low-pass hypothesis was
-   false in-domain but the tampered collapse under shift reinstates it — see
-   [[clip-low-pass-destroys-tampered]].
+## Next steps (on the box)
+
+1. `git pull`; `uv pip install transformers` into `.venv` (declared in pyproject, not in the
+   lock, like open_clip); make sure the box can fetch the ~99 MB teacher once, or pre-seed
+   `~/.cache/huggingface/hub/models--depth-anything--Depth-Anything-V2-Small-hf`.
+2. `LIMIT_SHARDS=1 bash jobs/precompute_depth_targets.sh` — read img/s from the probe; the
+   full `train` profile is 30 shards.
+3. `setsid bash jobs/track_c_depth.sh` — its first step is a two-batch GPU smoke of
+   `pgd_at_depth` and one depth-score evaluation: the two CUDA-only failure modes
+   (`gotchas/deterministic-mode-throws-on-median-and-bilinear-backward`) were fixed blind on
+   the Mac and this is where they get proven. If the smoke fails, fix before the store is built.
+4. Collate with `python3 jobs/summarise_track_c.py $LOGS_PATH/track_c_depth`; write the
+   snapshot; answer H(a)–H(d) from the spec; update this leaf.
 
 ## Blockers
 
-None hard. Multi-dataset training needs a combined datamodule plus a decision on how FakeClue's
-binary fakes map into the 3-class space; the colleague's `combined.py` folds them into
-*synthetic*, which muddies the tampered/synthetic separation this project works to preserve.
+None hard. Unverified until the smoke runs: the CUDA determinism fixes, the teacher's
+throughput at 518, and whether `transformers` on the box resolves against torch 2.5.1+cu124.
 
 ## How to resume, from the box, without SSH
 
-Claude Code 2.1.233 is installed at `~/.local/bin/claude` and authenticated. From
+Claude Code is installed at `~/.local/bin/claude` and authenticated. From
 `~/Desktop/FILES/PROJECTS/trustfake/framework`:
 
 ```bash
@@ -59,15 +72,11 @@ git pull                      # pick up this brain and any fixes
 ~/.local/bin/claude           # interactive, with this documentation/ as context
 ```
 
-Chain control:
+Chain control (`.done` markers make every chain resumable; a step that succeeded with a bad
+number is skipped on rerun -- delete its marker to redo it):
 
 ```bash
-LOGS=$(grep ^LOGS_PATH .env | cut -d= -f2)/track_b
-cat $LOGS/chain.log           # step-by-step progress
-ls $LOGS/*.done               # completed steps
-bash jobs/track_b_chain.sh    # resume; completed steps skip
-rm $LOGS/<step>.done          # force ONE step to re-run
+LOGS=$(grep ^LOGS_PATH .env | cut -d= -f2)/track_c_depth
+cat $LOGS/chain.log; ls $LOGS/*.done
+bash jobs/track_c_depth.sh
 ```
-
-`.done` markers make the chain resumable, but they also mean a step that *succeeded with a bad
-number* will be skipped on rerun — delete its marker to redo it.

@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+**An auxiliary depth head as a robustness regulariser and an independent
+uncertainty producer (Track C).** Nothing here has a number yet; the code,
+its tests and the chain script exist so the 3090 box can run the matrix.
+
+- **`model=resnet18_depth`**: `ResNet(depth_head=True)` adds a `DepthHead`
+  decoder under the flat key `depth_head.*`, reached only via
+  `forward_with_depth`; `ResNet.forward` is bit-identical to before, the
+  baseline state_dict keeps its 122 keys, and a checkpoint from either arm
+  refuses to load into the other (strict loading, pinned both ways). The
+  ImageNet loader now checks its own non-strict report: only `fc.*` (when the
+  class count differs) and `depth_head.*` may be missing.
+- **Training arms `standard_depth`, `pgd_at_depth`, `trades_depth`** with
+  `depth_lambda`: the parent arm plus a scale-and-shift-invariant L1 against
+  a frozen Depth Anything V2 teacher, the head supervised on the ADVERSARIAL
+  input against the CLEAN geometry, inner maximisation untouched, BatchNorm
+  update counts identical to the parents (pinned). AWP ascends the multi-task
+  loss. Refused, never warned: a depth arm without targets, targets nobody
+  consumes, a plain arm on a model with a head, `depth_lambda <= 0`, MC dropout.
+- **Precomputed targets** (`src/precompute_depth.py`, `trustfake.data.depth_targets`):
+  one float16 array per fit shard at the head's grid, keyed by manifest uid,
+  with a `manifest.json` recording teacher, revision, input size, grid and
+  view. `datamodule.datamodule.depth_targets_dir` (default null, byte-identical)
+  makes fit/val items `(image, label, depth)` and refuses a store computed on
+  another view, an uncovered fit row, crop mode, or a stochastic train
+  transform.
+- **`wrapper=depth` with `uncertainty_score=depth_consistency | depth_combined`**:
+  the residual between head and online teacher as the wrapper's uncertainty,
+  so the calib gate, temperature and every metric see it unchanged; the
+  combined score is an ECDF mix fitted on the in-domain calib split in
+  `src/test.py` (after T, before the moderation gate), which also writes the
+  σ-seam degeneracy gate (|ρ| vs `1 − MSP`) to `depth_calib_gate.json`.
+  `depth_attack_scoring` (`white_box` | `transfer`) records what an attack
+  sees. `outputs_from_logits` returns None so the pipe re-forwards the
+  perturbed batch. Binary fold + depth score refused.
+- **Determinism, caught before the first GPU run:** `Tensor.median(dim)` and
+  bilinear-interpolate backward both throw on CUDA under the trainer's
+  `deterministic: true`; the frame uses a sort-based lower median and the
+  head upsamples nearest+conv, each pinned by a spy test. The chain's first
+  step is a two-batch GPU smoke.
+- `transformers` declared (lazy import; the suite uses a stub teacher).
+  `jobs/track_c_depth.sh`, `jobs/precompute_depth_targets.sh`,
+  `jobs/summarise_track_c.py`. 916 unit tests (was 794).
+
 **Making the tampered-class failure measurable.** The class the detector
 struggles with is the tampered third of SID-Set, and until now the harness
 could not say so: per-class metrics were commented out, the detection AUROC
