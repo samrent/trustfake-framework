@@ -63,6 +63,15 @@ WITH_TRADES="${WITH_TRADES:-0}"
 CONDS="${CONDS:-clean pgd query_underconf query_overconf ace_uint8}"
 CORRUPTIONS="${CORRUPTIONS:-jpeg}"
 DATASETS="${DATASETS:-sid_set so_fake_ood}"
+# White-box cells through the teacher are the expensive ones: a query attack
+# is 400 queries x (LIMIT_TEST/EVAL_BATCH) batches, each a teacher forward at
+# 518 px (~0.25 s at batch 8), ~3.5 h per cell on the 3090 (measured
+# 2026-09-03). The pre-registered 16 query cells were 56 GPU-hours, so the
+# matrix was trimmed (PI decision 2026-09-03) to what H(d) reads: depth_wb on
+# the in-domain leg. Widen with WB_DATASETS="sid_set so_fake_ood" and
+# WB_SCORES="depth combined" to restore the full matrix.
+WB_DATASETS="${WB_DATASETS:-sid_set}"
+WB_SCORES="${WB_SCORES:-depth}"
 DEPTH_DIR="${DEPTH_DIR:-${DATA_PATH}/sid_set_depth/dav2_small_518_224}"
 TEACHER_INPUT="${TEACHER_INPUT:-518}"  # MUST equal the store's input_size
 ADV_EPS="${ADV_EPS:-0.03137}"          # 8/255, pinned
@@ -203,8 +212,14 @@ for cond in $CONDS $(for c in $CORRUPTIONS; do echo "corruption_$c"; done); do
       if is_confidence_axis "$cond"; then
         cell "$arm" "$model" "$dataset" "$cond" depth_tr depth depth_consistency transfer
         cell "$arm" "$model" "$dataset" "$cond" combined_tr depth depth_combined transfer
-        cell "$arm" "$model" "$dataset" "$cond" depth_wb depth depth_consistency white_box
-        cell "$arm" "$model" "$dataset" "$cond" combined_wb depth depth_combined white_box
+        case " $WB_DATASETS " in *" $dataset "*)
+          for s in $WB_SCORES; do
+            case "$s" in
+              depth)    cell "$arm" "$model" "$dataset" "$cond" depth_wb depth depth_consistency white_box;;
+              combined) cell "$arm" "$model" "$dataset" "$cond" combined_wb depth depth_combined white_box;;
+            esac
+          done;;
+        esac
       else
         cell "$arm" "$model" "$dataset" "$cond" depth depth depth_consistency transfer
         cell "$arm" "$model" "$dataset" "$cond" combined depth depth_combined transfer
