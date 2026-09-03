@@ -21,6 +21,12 @@ The third knob is about EVIDENCE rather than geometry: `input_mode="crop"`
 replaces the resize with fixed-size crops at native resolution, because the
 resize low-passes away exactly the high-frequency residue a tampered-image
 detector has to read (see the `input_mode` arg on `SIDSetDataModule`).
+
+The fourth, `depth_targets_dir`, is Track C's opt-in: with it set, the fit
+and val items carry a third element -- the precomputed teacher depth map of
+the SAME image, looked up by the manifest's uid (see
+`trustfake.data.depth_targets`). calib and test items never do; every
+consumer of those loaders unpacks exactly two values.
 """
 
 from __future__ import annotations
@@ -41,6 +47,12 @@ from torch.utils.data import Dataset as TorchDataset
 from torchvision import transforms
 
 from trustfake.data.baselines import image_dims_and_format
+from trustfake.data.depth_targets import (
+    ROLE_SOURCE_SPLIT,
+    DepthTargetStore,
+    check_store_manifest,
+    read_store_manifest,
+)
 from trustfake.data.manifest import (
     DEFAULT_MANIFEST_SEED,
     GEOMETRY_FILTERS,
@@ -131,7 +143,13 @@ def _original_dims(
 
 
 class SIDSetTorchDataset(TorchDataset[tuple[torch.Tensor, torch.Tensor]]):
-    """Torch dataset wrapper for a Hugging Face split from SID_Set."""
+    """Torch dataset wrapper for a Hugging Face split from SID_Set.
+
+    Items are ``(image, label)``. With a `depth_targets` store they are
+    ``(image, label, depth)``, the depth looked up by
+    ``f"{uid_prefix}:{row[id_column]}"`` -- the manifest's uid, never the
+    row position, which the seeded carve and the filters both move.
+    """
 
     def __init__(
         self,
@@ -139,11 +157,24 @@ class SIDSetTorchDataset(TorchDataset[tuple[torch.Tensor, torch.Tensor]]):
         image_column: str,
         label_column: str,
         transform: transforms.Compose,
+        id_column: str | None = None,
+        depth_targets: DepthTargetStore | None = None,
+        uid_prefix: str = "train",
     ) -> None:
         self.hf_dataset = hf_dataset
         self.image_column = image_column
         self.label_column = label_column
         self.transform = transform
+        if depth_targets is not None and id_column is None:
+            msg = "depth targets need an id column to key them by uid"
+            raise ValueError(msg)
+        self.id_column = id_column
+        self.depth_targets = depth_targets
+        self.uid_prefix = uid_prefix
+
+    @property
+    def has_depth_targets(self) -> bool:
+        return self.depth_targets is not None
 
     def __len__(self) -> int:
         return len(self.hf_dataset)
@@ -167,6 +198,9 @@ class SIDSetTorchDataset(TorchDataset[tuple[torch.Tensor, torch.Tensor]]):
 
         image_tensor = self.transform(pil_image)
         label_tensor = torch.tensor(label, dtype=torch.long)
+        if self.depth_targets is not None:
+            uid = f"{self.uid_prefix}:{sample[self.id_column]}"
+            return image_tensor, label_tensor, self.depth_targets[uid]
         return image_tensor, label_tensor
 
 
@@ -224,6 +258,17 @@ class SIDSetDataModule(L.LightningDataModule):
             Incompatible with ``squarecrop`` -- the square crop exists to
             feed the resize, and composing it with crop mode would read as
             two controls while one of them changes nothing it claims to.
+        depth_targets_dir: Track C's opt-in. A depth-target store written by
+            `src/precompute_depth.py`; when set, fit and val items become
+            ``(image, label, depth)`` with the teacher's map of the same
+            image (float32, (1, S, S)); calib, test and holdout stay
+            ``(image, label)``. The store's recorded pre-transform
+            (`image_size`, `squarecrop`, resize mode) must match this
+            datamodule's or setup() refuses it, and every fit row must be
+            covered or setup() refuses that too -- a target computed on a
+            different view of the pixels, or silently absent for some rows,
+            is a wrong number without a symptom. Requires ``input_mode=
+            "resize"``: a random crop has no fixed view to precompute.
     """
 
     IMAGE_COLUMN_CANDIDATES = ("image", "img", "pixel_values")
@@ -246,6 +291,7 @@ class SIDSetDataModule(L.LightningDataModule):
         squarecrop: bool = False,
         input_mode: str = "resize",
         limit_test: int | None = None,
+        depth_targets_dir: str | Path | None = None,
     ) -> None:
         super().__init__()
         self.data_dir = str(data_dir)
@@ -285,6 +331,19 @@ class SIDSetDataModule(L.LightningDataModule):
             logger.error(msg)
             raise ValueError(msg)
         self.input_mode = input_mode
+        if depth_targets_dir is not None and input_mode == "crop":
+            # A target is a fixed view of the image; a random crop is not.
+            msg = (
+                "depth_targets_dir with input_mode='crop': the depth targets are "
+                "precomputed on the resized full frame, and a random crop cannot "
+                "be aligned with them. Use input_mode='resize'."
+            )
+            logger.error(msg)
+            raise ValueError(msg)
+        self.depth_targets_dir = (
+            Path(depth_targets_dir) if depth_targets_dir is not None else None
+        )
+        self._depth_store: DepthTargetStore | None = None
 
         self.num_classes: int = 3
         self.split_provenance: str = SPLIT_PROVENANCE
@@ -418,6 +477,59 @@ class SIDSetDataModule(L.LightningDataModule):
             )
         return hf_dataset.select(keep)
 
+    @property
+    def has_depth_targets(self) -> bool:
+        """Whether fit/val items carry a depth target (Track C opt-in)."""
+        return self.depth_targets_dir is not None
+
+    def _open_depth_store(
+        self, fit_shards: list[Path], id_column: str | None, fit_dataset: Dataset
+    ) -> DepthTargetStore:
+        """Open the precomputed store and prove it fits this run: same
+        pre-transform as this datamodule, and a target for every fit row.
+        Both refusals happen here, at setup, rather than at the first batch
+        that would have needed the missing map."""
+        if id_column is None:
+            msg = (
+                "depth_targets_dir needs an id column to key targets by uid; "
+                f"none of {list(self.ID_COLUMN_CANDIDATES)} is in the shards."
+            )
+            logger.error(msg)
+            raise ValueError(msg)
+        if "Random" in repr(self.train_transform):
+            # A target is one fixed view of the image; a stochastic train
+            # transform would pair each epoch's pixels with another view's
+            # geometry, and the loss would keep decreasing regardless.
+            msg = (
+                "depth_targets_dir with a stochastic train transform "
+                f"({self.train_transform!r}): precomputed targets can only "
+                "be aligned with a deterministic view of the image."
+            )
+            logger.error(msg)
+            raise ValueError(msg)
+        meta = read_store_manifest(self.depth_targets_dir)
+        # The grid is tied to the head: it emits image_size // 2, and the
+        # loss refuses to resample, so a store at another grid is refused
+        # here rather than at the first batch.
+        check_store_manifest(
+            meta,
+            image_size=self.image_size,
+            squarecrop=self.squarecrop,
+            input_mode=self.input_mode,
+            output_size=self.image_size // 2,
+        )
+        store = DepthTargetStore(
+            self.depth_targets_dir, fit_shards, ROLE_SOURCE_SPLIT["fit"]
+        )
+        prefix = ROLE_SOURCE_SPLIT["fit"]
+        store.assert_covers(f"{prefix}:{i}" for i in fit_dataset[id_column])
+        logger.info(
+            f"Depth targets: {len(store)} maps at {store.size}x{store.size} from "
+            f"{meta.get('teacher')} ({self.depth_targets_dir}); fit and val items "
+            "carry a third element."
+        )
+        return store
+
     def setup(self, stage: str | None = None) -> None:
         if self._train_ds is not None:
             # Already setup
@@ -442,6 +554,11 @@ class SIDSetDataModule(L.LightningDataModule):
         if id_column is not None:
             self._check_ids(dataset, id_column)
 
+        if self.depth_targets_dir is not None:
+            self._depth_store = self._open_depth_store(
+                manifest["fit"], id_column, dataset["fit"]
+            )
+
         # The geometry control runs after the uid tripwire, so the tripwire
         # still sees every row it is meant to police.
         if self.geometry_filter != "none":
@@ -455,21 +572,29 @@ class SIDSetDataModule(L.LightningDataModule):
         )
 
         def _wrap(
-            hf_dataset: Dataset, transform: transforms.Compose | None = None
+            hf_dataset: Dataset,
+            transform: transforms.Compose | None = None,
+            depth: bool = False,
         ) -> SIDSetTorchDataset:
             return SIDSetTorchDataset(
                 hf_dataset,
                 image_column=self.image_column,
                 label_column=self.label_column,
                 transform=transform if transform is not None else self.transform,
+                id_column=id_column if depth else None,
+                depth_targets=self._depth_store if depth else None,
+                uid_prefix=ROLE_SOURCE_SPLIT["fit"],
             )
 
         # Only the fit-train slice gets the (possibly stochastic) train
         # transform; val is model selection and must see the deterministic
         # eval view, like calib and test. In resize mode the two are the
-        # same object and this changes nothing.
-        self._train_ds = _wrap(fit_split["train"], transform=self.train_transform)
-        self._val_ds = _wrap(fit_split["test"])
+        # same object and this changes nothing. Depth targets ride with the
+        # two fit-derived slices only.
+        self._train_ds = _wrap(
+            fit_split["train"], transform=self.train_transform, depth=True
+        )
+        self._val_ds = _wrap(fit_split["test"], depth=True)
         self._calib_ds = _wrap(dataset["calib"])
         test_split = dataset["test"]
         if self.limit_test is not None and self.limit_test < test_split.num_rows:

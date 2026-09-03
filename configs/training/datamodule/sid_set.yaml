@@ -52,6 +52,14 @@ datamodule:
   # condition must be read against thresholds fitted on the same calibration
   # data, or the comparison is between policies rather than attacks.
   limit_test: null
+  # TRACK C -- precomputed depth targets (src/precompute_depth.py). null (the
+  # default) changes nothing. Set to the store directory and fit/val items
+  # become (image, label, depth); calib/test stay (image, label). The store's
+  # recorded image_size / squarecrop / resize mode must match this config or
+  # setup() refuses it, and every fit row must be covered. Requires
+  # input_mode: resize. Only the depth training arms consume it; any other
+  # arm refuses a datamodule that carries it.
+  depth_targets_dir: null
   # Optional normalization layer applied to inputs before the model forward
   # pass. Defaults to no-op (nn.Identity) when left null. Uncomment to enable
   # ImageNet normalization, for example:
