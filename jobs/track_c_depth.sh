@@ -46,7 +46,16 @@ PY=.venv/bin/python
 TAG="${TAG:-track_c}"
 PROFILE="${PROFILE:-train}"
 EPOCHS="${EPOCHS:-12}"
-BATCH="${BATCH:-32}"
+BATCH="${BATCH:-32}"                 # training batch: the Track A recipe, unchanged
+# Evaluation batch, separate from the recipe. Measured on the 3090 2026-09-03:
+# a white-box attack whose gradient flows through the fp32 teacher at 518 px
+# costs ~0.85 GB per image, so batch 32 (~27 GB) cannot fit a 24 GB card
+# under any circumstances, and the calib pass alone (~9 GB at 32) fails
+# beside the box's resident processes. Batch 8 peaks at ~6.7 GB. Every
+# attack in CONDS reduces per-sample (sum / sign), so the eval batch does
+# not touch any reported number; it only sets the memory footprint.
+EVAL_BATCH="${EVAL_BATCH:-8}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 WORKERS="${WORKERS:-6}"
 LIMIT_TEST="${LIMIT_TEST:-1000}"
 LAMBDAS="${LAMBDAS:-1.0}"            # e.g. "0.1 0.3 1.0" for the sweep
@@ -118,7 +127,7 @@ step "smoke__depth_score" \
     uncertainty_score=depth_combined datamodule.datamodule.profile=smoke \
     "datamodule.datamodule.limit_test=${SMOKE_LIMIT:-64}" \
     "depth_teacher_input_size=${TEACHER_INPUT}" depth_attack_scoring=white_box \
-    +attack=fgsm "dataloaders.batch_size=${BATCH}" "dataloaders.num_workers=${WORKERS}" \
+    +attack=fgsm "dataloaders.batch_size=${EVAL_BATCH}" "dataloaders.num_workers=${WORKERS}" \
   || { say "smoke eval FAILED: fix before the chain"; exit 1; }
 # The CPU suite proves the white-box gradient in fp32 only; this proves it
 # on the device the numbers will come from.
@@ -168,7 +177,7 @@ cell() {  # cell <arm> <model> <dataset> <cond> <score-key> <wrapper> <score-yam
   local args=(
     "experiment.name=${TAG}_${arm}" "model=${model}" "wrapper=${wrapper}"
     "uncertainty_score=${yaml}" "datamodule.datamodule.limit_test=${LIMIT_TEST}"
-    "dataloaders.batch_size=${BATCH}" "dataloaders.num_workers=${WORKERS}"
+    "dataloaders.batch_size=${EVAL_BATCH}" "dataloaders.num_workers=${WORKERS}"
   )
   case "$dataset" in
     sid_set)     args+=("datamodule.datamodule.profile=${PROFILE}");;
