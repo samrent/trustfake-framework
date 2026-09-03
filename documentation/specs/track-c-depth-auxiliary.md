@@ -172,3 +172,10 @@ scorings, G1–G5 recorded, and H(a)–H(d) each answered with a number or "not 
   gradient underflow (online teacher now fp32), EXIF-inconsistent precompute decoding, a
   training-time wrapper/arm combination that crashed on the first batch, and the collator's
   score-independent moderation columns and mislabelled gate rows.
+- 2026-09-03 — first GPU smoke on the 3090. Precompute and the two-batch `pgd_at_depth` run
+  passed under deterministic mode; the `depth_combined` white-box eval OOMed in the calib pass
+  at batch 32. Measured: white-box through the fp32 teacher at 518 px costs ~0.85 GB/image
+  (batch 8 peaks at ~6.7 GB, so batch 32 would need ~27 GB, more than the card). Fix in the
+  runbook only: `EVAL_BATCH` (default 8) for every `src/test.py` call; the training batch stays
+  32. Attacks reduce per-sample, so no reported number depends on it. Store probe: ~40 img/s,
+  ~25 KB/image.
