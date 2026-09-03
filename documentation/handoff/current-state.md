@@ -57,10 +57,30 @@ the executable runbook is `jobs/track_c_depth.sh`. Design decisions in
 4. Collate with `python3 jobs/summarise_track_c.py $LOGS_PATH/track_c_depth`; write the
    snapshot; answer H(a)–H(d) from the spec; update this leaf.
 
+## The box, as checked live on 2026-09-03 (from the other session's readiness note)
+
+- Branch state: `claude/track-c-depth-auxiliary` is on `origin` (PR #6 into `main`). The
+  earlier note that "the depth branch was never pushed" (branch
+  `claude/track-c-depth-auxiliary-944efa`, one doc commit) is superseded by this leaf.
+- `transformers==5.16.1` is installed in the shared `.venv` with `uv pip install`; torch stayed
+  `2.5.1+cu124`. It is declared in pyproject but not in the lock, so a `uv sync` drops it again.
+- The teacher `depth-anything/Depth-Anything-V2-Small-hf` is cached at the pinned snapshot
+  `5426e4f0f36572d16453bbda7a8389317b1bef99`; loading through `AutoModelForDepthEstimation`, a
+  518x518 forward and an fp32 backward to the input were all proven finite on the GPU.
+- **The HF cache is not in `$HOME`:** `~/.cache/huggingface` is a symlink to
+  `/scratch/models/huggingface`; nothing sets `HF_HOME`. Pre-seeding works only via that link.
+- GPU: nothing from this project was training; two unrelated resident processes (a llama.cpp
+  server and the sotto app) hold ~12.5 GB of 24 GB, leaving ~11 GB. `pgd_at_depth` runs the
+  ResNet plus the fp32 teacher at 518 px with seven inner steps -- if the smoke OOMs, those two
+  processes are the first thing to stop, not the batch size. Sequential only.
+- In a box worktree `.venv` is not gitignored (only `.env` is): never `git add -A` there.
+- Local `main` on the box is behind `origin/main`; a plain `git pull` fast-forwards it.
+
 ## Blockers
 
-None hard. Unverified until the smoke runs: the CUDA determinism fixes, the teacher's
-throughput at 518, and whether `transformers` on the box resolves against torch 2.5.1+cu124.
+None hard. Unverified until the smoke runs: the CUDA determinism fixes on the framework side
+(the teacher path alone was proven), the teacher's throughput at 518, and memory with the
+resident processes up.
 
 ## How to resume, from the box, without SSH
 
