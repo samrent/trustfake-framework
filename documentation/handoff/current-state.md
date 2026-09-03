@@ -76,6 +76,44 @@ the executable runbook is `jobs/track_c_depth.sh`. Design decisions in
 - In a box worktree `.venv` is not gitignored (only `.env` is): never `git add -A` there.
 - Local `main` on the box is behind `origin/main`; a plain `git pull` fast-forwards it.
 
+## Track C on the box — live, 2026-09-03
+
+Chain launched 2026-09-03 15:30 UTC from worktree `claude/track-c-depth-auxiliary-944efa`
+(the merged `main` plus one runbook fix), `PYTHONPATH=<worktree>/src`, logs in
+`$LOGS_PATH/track_c_depth`. Timeline so far (UTC): smoke 15:30–15:36 (the first eval OOMed,
+see below; re-run passed), store 15:36–15:44 (30 shards, 25,320 rows, all finite, 569 MB,
+~40 img/s), `standard` 807 s, `pgd_at` 1352 s, `standard_depth_l1.0` 822 s,
+`pgd_at_depth_l1.0` 1545 s; evaluation cells from 16:59. An `msp` cell is ~1 min; a depth-scored
+cell is ~5 min before attack cost (the calib pass over 7,059 rows through the teacher at batch
+8 dominates), so the 120-cell matrix is an overnight run.
+
+- **Smoke finding, fixed in the runbook only:** white-box through the fp32 teacher at 518 px
+  costs ~0.85 GB per image, so the recipe's batch 32 cannot fit a 24 GB card for the `_wb`
+  cells under any circumstances, and the calib pass alone OOMed beside the box's resident
+  processes. `jobs/track_c_depth.sh` now has `EVAL_BATCH` (default 8) for every `src/test.py`
+  call; the training batch is untouched. Attacks reduce per-sample, so no number moves.
+- **The recipe reproduces:** `track_c_standard`'s validation curve equals `e8_standard`'s to
+  the last digit on all 12 epochs. Selected epochs: standard 4, pgd_at 11, standard_depth 7,
+  pgd_at_depth 7.
+- **G3 will bite the AT arms:** `pgd_at` clean L1 accuracy is 0.7003, `pgd_at_depth` validation
+  peaks at 0.7255; both under the 0.75 floor. Track A's own 8/255 arms sit at 0.69–0.77
+  (`snapshots/2026-08-31-track-a-arm-inventory`), so this is the known cost of 8/255 on this
+  task, not a broken fit. The spec's rule as written makes H(b) "not readable"; the relative
+  number should still be reported beside that verdict, and the floor revisited for AT arms.
+- **Early numbers (L1 clean, one seed, λ=1.0):** standard 0.8249, standard_depth 0.8317
+  (+0.0068, under H(a)'s +0.01). G2 |ρ| = 0.2534 on calib — independent. Depth score on clean
+  Φ 0.5761 vs msp 0.8393 — the residual is not a misclassification detector on clean inputs;
+  its claim is under attack. Both baselines at chance on So-Fake-OOD (0.35 / 0.32), as Track B.
+
+Resume / read:
+
+```bash
+LOGS=$(grep ^LOGS_PATH .env | cut -d= -f2)/track_c_depth
+tail -5 $LOGS/chain.log; ls $LOGS/*.done | wc -l        # 120 cells + 8 setup steps when done
+PYTHONPATH=$PWD/src setsid bash jobs/track_c_depth.sh   # resumes; completed steps skip
+python3 jobs/summarise_track_c.py $LOGS > RESULTS_track_c.md
+```
+
 ## Blockers
 
 None hard. Unverified until the smoke runs: the CUDA determinism fixes on the framework side
