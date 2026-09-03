@@ -6,6 +6,7 @@ from .clip import (
     clip_probe,
     clip_zeroshot,
 )
+from .depth_head import DepthHead
 from .resnet import resnet18, resnet34, resnet50, resnet101, resnet152
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "clip_probe",
     "BinaryFoldClassifier",
     "REAL_CLASS",
+    "DepthHead",
 ]
