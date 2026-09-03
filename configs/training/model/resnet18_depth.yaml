@@ -1,0 +1,14 @@
+# ResNet-18 with the Track C auxiliary depth head. The head is reached only
+# through `forward_with_depth`; `forward` (what every attack and evaluation
+# pipe calls) is byte-identical to `resnet18`. A distinct `name` gives the
+# arm its own output tree and, because src/test.py rebuilds the module and
+# loads the checkpoint STRICTLY, every evaluation of a depth-trained
+# checkpoint must pass `model=resnet18_depth` too.
+name: resnet18_depth
+model:
+  _target_: trustfake.models.torch.resnet18
+  pretrained: true
+  num_classes: 3
+  dropout_p: 0.2
+  depth_head: true
+  depth_head_width: 128

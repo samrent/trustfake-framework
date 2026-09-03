@@ -8,6 +8,12 @@ from hydra.core.hydra_config import HydraConfig
 from lightning.pytorch.callbacks import ModelCheckpoint
 from omegaconf import DictConfig
 
+from trustfake.data.depth_targets import read_store_manifest
+from trustfake.depth import (
+    DEFAULT_TEACHER_INPUT_SIZE,
+    DEPTH_ANYTHING_V2_SMALL,
+    DEPTH_ANYTHING_V2_SMALL_REVISION,
+)
 from trustfake.instantiator import (
     CallbacksHandler,
     config_parsing,
@@ -16,12 +22,16 @@ from trustfake.instantiator import (
 from trustfake.logging import add_handler, get_logger
 from trustfake.models.wrapper import (
     BaseWrapper,
+    DepthConsistencyWrapper,
     EvidentialWrapper,
     MCDropoutWrapper,
 )
 from trustfake.pipes.train import (
     ConfidenceAdversarialTrainingModule,
     ConfidenceRegularisedTrainingModule,
+    DepthPGDAdversarialTrainingModule,
+    DepthStandardTrainingModule,
+    DepthTRADESTrainingModule,
     EvidentialAdversarialTrainingModule,
     HybridAdversarialTrainingModule,
     MARTTrainingModule,
@@ -29,6 +39,7 @@ from trustfake.pipes.train import (
     StandardTrainingModule,
     TRADESTrainingModule,
 )
+from trustfake.pipes.train.depth_auxiliary import check_depth_arm
 
 logger = get_logger("training-pipe")
 
@@ -36,6 +47,7 @@ WRAPPERS = {
     "base": BaseWrapper,
     "mc_dropout": MCDropoutWrapper,
     "evidential": EvidentialWrapper,
+    "depth": DepthConsistencyWrapper,
 }
 
 TRAINING_PIPES = {
@@ -51,6 +63,11 @@ TRAINING_PIPES = {
     "conf_reg": ConfidenceRegularisedTrainingModule,
     # Evidential.
     "evidential_adversarial": EvidentialAdversarialTrainingModule,
+    # Track C: the parent arm plus an auxiliary depth head trained against a
+    # frozen teacher (model=resnet18_depth, depth_targets_dir set).
+    "standard_depth": DepthStandardTrainingModule,
+    "pgd_at_depth": DepthPGDAdversarialTrainingModule,
+    "trades_depth": DepthTRADESTrainingModule,
 }
 
 # Arms sharing the adversarial-training scaffold (inner PGD, eps warm-up,
@@ -61,6 +78,14 @@ _ADVERSARIAL_PIPES = (
     HybridAdversarialTrainingModule,
     MARTTrainingModule,
     ConfidenceAdversarialTrainingModule,
+    DepthPGDAdversarialTrainingModule,
+    DepthTRADESTrainingModule,
+)
+# Arms that read `depth_lambda`.
+_DEPTH_PIPES = (
+    DepthStandardTrainingModule,
+    DepthPGDAdversarialTrainingModule,
+    DepthTRADESTrainingModule,
 )
 # `beta` weights a different term in each arm (TRADES: KL against natural CE;
 # AT+KL: consistency KL against adversarial CE; MART: misclassification-weighted
@@ -69,12 +94,27 @@ _BETA_KEYS = {
     TRADESTrainingModule: "trades_beta",
     HybridAdversarialTrainingModule: "at_kl_beta",
     MARTTrainingModule: "mart_beta",
+    DepthTRADESTrainingModule: "trades_beta",
 }
 # Every arm except `standard` can take a weight-space inner maximisation.
 _AWP_CAPABLE = _ADVERSARIAL_PIPES + (
     ConfidenceRegularisedTrainingModule,
     EvidentialAdversarialTrainingModule,
 )
+
+
+def _depth_wrapper_kwargs(cfg) -> dict:
+    """Teacher settings for `wrapper=depth`, read with inert defaults."""
+    return {
+        "teacher_name": cfg.get("depth_teacher", DEPTH_ANYTHING_V2_SMALL),
+        "teacher_revision": cfg.get(
+            "depth_teacher_revision", DEPTH_ANYTHING_V2_SMALL_REVISION
+        ),
+        "teacher_input_size": cfg.get(
+            "depth_teacher_input_size", DEFAULT_TEACHER_INPUT_SIZE
+        ),
+        "teacher_grad": cfg.get("depth_teacher_grad", True),
+    }
 
 
 def _resume_checkpoint(cfg: DictConfig, trainer) -> str | None:
@@ -149,6 +189,8 @@ def run_train_pipe(cfg: DictConfig) -> None:
         wrapper_kwargs["evidence_activation"] = cfg.get(
             "evidence_activation", "softplus"
         )
+    if wrapper_cls is DepthConsistencyWrapper:
+        wrapper_kwargs = _depth_wrapper_kwargs(cfg)
 
     module = wrapper_cls(
         normalization_layer=datamodule.normalization_layer,
@@ -189,6 +231,27 @@ def run_train_pipe(cfg: DictConfig) -> None:
     if pipe_cls in _AWP_CAPABLE:
         pipe_kwargs["awp_gamma"] = cfg.get("awp_gamma", 0.0)
         pipe_kwargs["awp_warmup_epochs"] = cfg.get("awp_warmup_epochs", 0)
+    if pipe_cls in _DEPTH_PIPES:
+        pipe_kwargs["depth_lambda"] = cfg.get("depth_lambda", 1.0)
+
+    # Arm, model and data must agree about the depth head (Track C); each
+    # mismatch below runs to completion and reports a plausible number.
+    try:
+        check_depth_arm(pipe_cls, module, datamodule, pipe_name)
+    except ValueError as e:
+        logger.error(str(e))
+        raise
+    if getattr(datamodule, "has_depth_targets", False):
+        # The instrument the targets came from, in the training log: the
+        # evaluation teacher (depth_teacher*, in eval_config) must match it.
+        meta = read_store_manifest(datamodule.depth_targets_dir)
+        logger.info(
+            "Depth targets from "
+            f"{meta.get('teacher')}@{meta.get('revision')} at input "
+            f"{meta.get('input_size')}, grid {meta.get('output_size')}, "
+            f"{meta.get('precision', 'unknown precision')}; evaluate with "
+            f"depth_teacher_input_size={meta.get('input_size')}."
+        )
 
     # EVERY pipe, not just the adversarial ones. If the classical baselines
     # could be selected on robustness and EV-AT / conf_reg / standard could

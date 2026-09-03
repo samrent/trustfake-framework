@@ -383,6 +383,9 @@ The training pipeline is chosen with `experiment.training_pipe`:
 | `at_conf` | **confidence** | AT against the *confidence* attack | `adv_eps`, `adv_steps` |
 | `conf_reg` | **confidence** | penalty on confident mistakes, no adversary | `lambda_reg` |
 | `evidential_adversarial` | evidence | Evidential Adversarial Training (EV-AT) | `beta`, `rea_mode`, `ikl_ema`, `adv_eps`, `adv_steps` |
+| `standard_depth` | — (+ geometry) | ordinary training + an auxiliary depth head (Track C) | `depth_lambda`, `model=resnet18_depth`, `datamodule.datamodule.depth_targets_dir` |
+| `pgd_at_depth` | label (+ geometry) | PGD-AT + the depth head supervised on the adversarial input | as above + `adv_eps`, `adv_steps`, `adv_warmup_epochs` |
+| `trades_depth` | label (+ geometry) | TRADES + the depth head on the adversarial forward | as above + `trades_beta` |
 
 The **axis** column is the one that matters. Every classical arm defends the
 *label* axis: it assumes the adversary wants to change the prediction. But the
@@ -442,6 +445,42 @@ collapse adversarial training, so lower `adv_eps` (e.g. `0.00784` = 2/255) or
 ramp it with `adv_warmup_epochs`. Adversarial-training arms must be matched on
 optimiser steps (same `max_epochs`/schedule), not wall-clock, to compare method
 rather than budget.
+
+### Track C: auxiliary depth (multi-task robustness, depth-consistency rejection)
+
+Two questions, one head. A `DepthHead` decoder sits on the ResNet's layer3/
+layer4 maps (`model=resnet18_depth`; `ResNet.forward` is bit-identical to
+`resnet18`, the head is reached only through `forward_with_depth`) and trains
+against a frozen **Depth Anything V2 small** teacher with a scale-and-shift-
+invariant L1 (`L = CE + depth_lambda · L_depth`). Multi-task learning with
+misaligned task gradients is a known robustness regulariser (Mao et al. 2020);
+the head is dropped at inference, so it adds no attack surface. The teacher's
+maps are precomputed once, keyed by the manifest's uid, and the datamodule
+refuses a store that was computed on a different view of the pixels:
+
+```bash
+.venv/bin/python src/precompute_depth.py --profile train \
+  --out-dir $DATA_PATH/sid_set_depth/dav2_small_518_224            # once, on the GPU box
+python src/train.py experiment.name=c_pgd_at_depth experiment.training_pipe=pgd_at_depth \
+  model=resnet18_depth datamodule.datamodule.depth_targets_dir=$DATA_PATH/sid_set_depth/dav2_small_518_224 \
+  adv_eps=0.03137 adv_steps=7 adv_warmup_epochs=2 depth_lambda=1.0
+```
+
+The second use is a **rejection score**: the per-image residual between the
+model's head and the teacher run online on the same (possibly attacked) input.
+It is scored through the usual failure-detection and selective metrics by
+evaluating the same checkpoint three ways — `wrapper=base
+uncertainty_score=multiclass_max_probability`, `wrapper=depth
+uncertainty_score=depth_consistency`, and `wrapper=depth
+uncertainty_score=depth_combined` (an ECDF-normalised mix fitted on the
+in-domain calib split). `depth_attack_scoring` records what an attack sees:
+`white_box` (the depth score itself, teacher included) or `transfer` (`1 −
+MSP`, with depth computed on the final batch). `src/test.py` also writes a
+degeneracy gate (|Spearman ρ| against `1 − MSP` on calib) beside the metrics.
+`jobs/track_c_depth.sh` is the whole chain; `jobs/summarise_track_c.py`
+collates it per cell, because three scorings of one checkpoint log identical
+metric keys. Every depth-score number carries the caveat that a gradient
+adaptive attack on the residual is a follow-up.
 
 ## Selective moderation (WP4)
 

@@ -1,4 +1,5 @@
 import os
+from contextlib import nullcontext
 from pathlib import Path
 
 import hydra
@@ -7,6 +8,11 @@ import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 
+from trustfake.depth import (
+    DEFAULT_TEACHER_INPUT_SIZE,
+    DEPTH_ANYTHING_V2_SMALL,
+    DEPTH_ANYTHING_V2_SMALL_REVISION,
+)
 from trustfake.instantiator import (
     config_parsing,
     save_experiment_config,
@@ -19,9 +25,11 @@ from trustfake.metrics.moderation import (
     fit_thresholds,
     fit_uncertainty_gate,
 )
+from trustfake.metrics.uncertainty import CombinedDepthScore
 from trustfake.models.torch import BinaryFoldClassifier
 from trustfake.models.wrapper import (
     BaseWrapper,
+    DepthConsistencyWrapper,
     EvidentialWrapper,
     MCDropoutWrapper,
 )
@@ -35,7 +43,112 @@ WRAPPERS = {
     "base": BaseWrapper,
     "mc_dropout": MCDropoutWrapper,
     "evidential": EvidentialWrapper,
+    "depth": DepthConsistencyWrapper,
 }
+
+
+def _depth_wrapper_kwargs(cfg) -> dict:
+    """Teacher settings for `wrapper=depth`, read with inert defaults. The
+    input size must be the one the training targets were precomputed with,
+    or the score compares two instruments."""
+    return {
+        "teacher_name": cfg.get("depth_teacher", DEPTH_ANYTHING_V2_SMALL),
+        "teacher_revision": cfg.get(
+            "depth_teacher_revision", DEPTH_ANYTHING_V2_SMALL_REVISION
+        ),
+        "teacher_input_size": cfg.get(
+            "depth_teacher_input_size", DEFAULT_TEACHER_INPUT_SIZE
+        ),
+        "teacher_grad": cfg.get("depth_teacher_grad", True),
+        "attack_scoring": cfg.get("depth_attack_scoring", "white_box"),
+    }
+
+
+def _average_ranks(x: torch.Tensor) -> torch.Tensor:
+    """Ranks with ties given their mean rank (Spearman's convention), so a
+    constant vector ranks constant and correlates with nothing."""
+    order = x.argsort()
+    sorted_x = x[order]
+    _, inverse, counts = torch.unique_consecutive(
+        sorted_x, return_inverse=True, return_counts=True
+    )
+    starts = counts.cumsum(0) - counts
+    mean_rank = starts.double() + (counts.double() - 1) / 2
+    ranks = torch.empty(x.numel(), dtype=torch.float64)
+    ranks[order] = mean_rank[inverse]
+    return ranks
+
+
+def spearman_abs(a: torch.Tensor, b: torch.Tensor) -> float:
+    """|Spearman rho| between two 1-D score vectors; NaN when either is
+    constant (undefined, never 0.0)."""
+    a = a.detach().flatten().double()
+    b = b.detach().flatten().double()
+    if a.numel() < 2 or a.numel() != b.numel():
+        return float("nan")
+    ra = _average_ranks(a)
+    rb = _average_ranks(b)
+    ra = ra - ra.mean()
+    rb = rb - rb.mean()
+    denom = (ra.norm() * rb.norm()).item()
+    if denom == 0.0:
+        return float("nan")
+    return abs(float((ra * rb).sum() / denom))
+
+
+def calib_depth_pass(eval_module, calib_loader, device, trainer) -> dict:
+    """The calib-split pass every depth-aware scoring needs (Track C).
+
+    Two things happen here, both on the IN-DOMAIN calib split -- the same
+    source temperature and the moderation gate come from -- and ordered after
+    temperature scaling (the max-probability component depends on T) and
+    before the moderation fit (the gate must be fitted on the final score):
+
+    1. `CombinedDepthScore` gets its calib reference (`fit_reference`).
+    2. Validity gate G2 (TODO section 4, the sigma seam): |Spearman rho|
+       between the depth residual and 1 - max prob on calib. A residual
+       that is 1 - MSP relabelled (|rho| >= 0.98) is not an independent
+       uncertainty producer, however good its AUROC looks. Logged, and
+       written to `depth_calib_gate.json` beside the metrics so a collator
+       can read it without parsing logs.
+    """
+    score = eval_module.model.uncertainty_score
+    msp_list, residual_list = [], []
+    eval_module.model.to(device).eval()
+    with torch.no_grad():
+        for inputs, _ in calib_loader:
+            msp, residual = eval_module.model.score_components(inputs.to(device))
+            msp_list.append(msp.detach().cpu())
+            residual_list.append(residual.detach().cpu())
+    msp = torch.cat(msp_list)
+    residual = torch.cat(residual_list)
+    if isinstance(score, CombinedDepthScore):
+        score.fit_reference(msp, residual)
+        logger.info(
+            f"CombinedDepthScore reference fitted on {msp.numel()} calib rows "
+            f"(weight={score.weight})"
+        )
+    gate = {
+        "n_calib": int(msp.numel()),
+        "spearman_abs_residual_vs_msp": spearman_abs(residual, msp),
+        "residual_mean": float(residual.mean()) if residual.numel() else float("nan"),
+        "residual_std": float(residual.std()) if residual.numel() > 1 else float("nan"),
+        "residual_finite": bool(torch.isfinite(residual).all()),
+        "degeneracy_threshold": 0.98,
+    }
+    logger.info(
+        "Depth score on calib -- GATE G2 |rho(residual, 1-MSP)| = "
+        f"{gate['spearman_abs_residual_vs_msp']:.4f} (>= 0.98 means the "
+        f"residual is MSP relabelled); residual mean {gate['residual_mean']:.4f}, "
+        f"std {gate['residual_std']:.4f}, n = {gate['n_calib']}"
+    )
+    import json
+
+    for trainer_logger in trainer.loggers:
+        log_dir = Path(trainer_logger.log_dir)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "depth_calib_gate.json").write_text(json.dumps(gate, indent=2))
+    return gate
 
 
 @hydra.main(
@@ -116,6 +229,8 @@ def run_eval_pipe(cfg: DictConfig):
         wrapper_kwargs["evidence_activation"] = cfg.get(
             "evidence_activation", "softplus"
         )
+    if wrapper_cls is DepthConsistencyWrapper:
+        wrapper_kwargs = _depth_wrapper_kwargs(cfg)
 
     # PyTorch model
     module_best = wrapper_cls(
@@ -150,6 +265,16 @@ def run_eval_pipe(cfg: DictConfig):
     # would prefix every state_dict key with `inner.` and the load would fail
     # to match. p_fake = 1 - P(real), the repo-wide definition.
     if cfg.get("binary_fold", False):
+        if getattr(module_best, "consumes_depth", False):
+            # The fold replaces `wrapper.model` and hides `forward_with_depth`;
+            # the depth score would have nothing to compute against.
+            msg = (
+                "binary_fold=true with a depth-aware uncertainty score: the fold "
+                "hides the depth path. Score the folded model with "
+                "uncertainty_score=multiclass_max_probability instead."
+            )
+            logger.error(msg)
+            raise ValueError(msg)
         if datamodule.num_classes != 2:
             msg = (
                 f"binary_fold=true but the datamodule reports "
@@ -192,13 +317,36 @@ def run_eval_pipe(cfg: DictConfig):
                 "scaling (temperature stays 1.0)."
             )
         else:
-            temperature = calibrate_temperature(
-                eval_module.model, calib_loader(), device=resolve_device()
+            # A depth-aware wrapper scores by probability here: temperature
+            # needs logits only, and the combined score has no calib
+            # reference yet (it is fitted right after this, and would raise).
+            probability_only = getattr(
+                eval_module.model, "probability_only", nullcontext
             )
+            with probability_only():
+                temperature = calibrate_temperature(
+                    eval_module.model, calib_loader(), device=resolve_device()
+                )
             eval_module.model.temperature = temperature
             logger.info(f"Applied fitted temperature T = {temperature:.4f}")
     else:
         logger.info("Calibration disabled (calibrate=false); temperature = 1.0")
+
+    # Track C: every depth-aware scoring needs a calib pass -- the combined
+    # score for its reference, all of them for the degeneracy gate -- from
+    # the same in-domain source, after T and before the moderation gate.
+    if getattr(eval_module.model, "consumes_depth", False):
+        calib_loader = getattr(calib_source, "calib_dataloader", None)
+        if calib_loader is None:
+            msg = (
+                "a depth-aware uncertainty score needs an in-domain calib split "
+                "(the combined score fits its reference there, and every depth "
+                "score is gated there); select calib_datamodule=sid_set."
+            )
+            logger.error(msg)
+            raise ValueError(msg)
+        datamodule.setup()
+        calib_depth_pass(eval_module, calib_loader(), resolve_device(), trainer)
 
     # WP4 selective moderation: fit the policy on the clean calib split (after
     # temperature) and freeze it. calib is shard-disjoint from test.

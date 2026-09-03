@@ -110,13 +110,17 @@ the first thing a robustness researcher will ask about.
       per class — tampered robustified against JPEG/resize (the corruption
       ladder) rather than against the L∞ ball — which is a protocol decision
       to make on numbers, not in advance.
-- [ ] **Independent uncertainty producer (the σ seam).** The uncertainty gate
+- [~] **Independent uncertainty producer (the σ seam).** The uncertainty gate
       always reads the wrapper's own score, so it cannot test an uncertainty
       that is *independent* of the confidence the attack moves — which is the
       one design that survives a confidence attack by construction. Needs a
       producer seam plus a degeneracy check (rank correlation against
       `1 − MSP`; |ρ| ≥ 0.98 means the "new" uncertainty is the old one
-      relabelled).
+      relabelled). **Built (Track C, 2026-09-03):** `wrapper=depth` is the
+      seam, `uncertainty_score=depth_consistency` the first producer, and
+      `src/test.py` writes the |ρ| gate to `depth_calib_gate.json`. Not yet
+      run; see `documentation/specs/track-c-depth-auxiliary.md`. Still open:
+      a gradient adaptive attack whose loss also minimises the residual.
 
 ### The VLM port (seam 1 landed, unmeasured)
 
