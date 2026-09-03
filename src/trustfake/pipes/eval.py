@@ -1,5 +1,6 @@
 import os
 from abc import ABC
+from contextlib import nullcontext
 
 import lightning as pl
 import numpy as np
@@ -244,7 +245,11 @@ class ClassificationEvaluationModule(ABC, pl.LightningModule):
         )
 
         if self.attack is not None:
-            with torch.enable_grad():
+            # A wrapper may mark the forwards an attack makes (Track C's
+            # depth wrapper decides what the attack scores against in there);
+            # every other wrapper has no such context and nothing changes.
+            attacking = getattr(self.model, "attacking", nullcontext)
+            with torch.enable_grad(), attacking():
                 result = self.attack.run(self.model, inputs, targets)
 
             # Prefer the logits from the attack's accept-check forward: a

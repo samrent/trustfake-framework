@@ -84,6 +84,41 @@ class TrustFakeWrapper(ABC, pl.LightningModule):
         """
         return None
 
+    @property
+    def has_depth_head(self) -> bool:
+        """Whether the wrapped model exposes a usable `forward_with_depth`.
+
+        A ResNet built without the head still has the method (it raises), so
+        the head attribute is checked too when the model has one.
+        """
+        return callable(getattr(self.model, "forward_with_depth", None)) and (
+            getattr(self.model, "depth_head", True) is not None
+        )
+
+    def forward_with_depth(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        """One backbone pass returning (logits, depth map).
+
+        The SEPARATE forward path for the auxiliary depth head (Track C).
+        `forward` stays exactly what every attack and evaluation pipe reads;
+        this method exists so the multi-task training pipes and the
+        depth-consistency score can reach the head without changing it.
+        Normalization is applied here as in `forward`, so callers hand in the
+        same raw [0, 1] pixels.
+
+        Raises:
+            ValueError: when the wrapped model has no depth path (a plain
+                backbone, or one hidden behind `BinaryFoldClassifier`).
+        """
+        if not self.has_depth_head:
+            msg = (
+                f"{type(self.model).__name__} has no forward_with_depth; the "
+                "depth path needs a model built with a depth head "
+                "(model=resnet18_depth), and it is not reachable through a "
+                "binary fold."
+            )
+            raise ValueError(msg)
+        return self.model.forward_with_depth(self.normalization_layer(x))
+
     def loss_input(self, logits: Tensor) -> Tensor:
         """What `self.loss_fn` should be fed, given raw logits.
 

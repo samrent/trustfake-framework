@@ -28,12 +28,21 @@ __all__ = [
     "select_evaluation_condition",
 ]
 
-# Each wrapper drives `uncertainty_score.update` differently.
-WRAPPER_UNCERTAINTY_SCORE_TARGETS: dict[str, str] = {
+# Each wrapper drives `uncertainty_score.update` differently. A value is one
+# target, or a tuple of admissible targets: the Track C `depth` wrapper is
+# `base` with a probability score and the only wrapper that can feed a
+# depth-aware score, so it admits three -- the three scorings of one
+# checkpoint.
+WRAPPER_UNCERTAINTY_SCORE_TARGETS: dict[str, str | tuple[str, ...]] = {
     "base": "trustfake.metrics.uncertainty.probs.MultiClassMaxProbability",
     "mc_dropout": "trustfake.metrics.uncertainty.mc_dropout.MCDropoutPredictiveEntropy",
     "evidential": (
         "trustfake.metrics.uncertainty.evidential.EvidentialPredictiveEntropy"
+    ),
+    "depth": (
+        "trustfake.metrics.uncertainty.probs.MultiClassMaxProbability",
+        "trustfake.metrics.uncertainty.depth.DepthConsistencyScore",
+        "trustfake.metrics.uncertainty.depth.CombinedDepthScore",
     ),
 }
 
@@ -54,10 +63,20 @@ class ExperimentConfig(BaseModel):
             )
             raise ValueError(msg)
 
-        if self.uncertainty_score != expected_target:
+        allowed = (
+            expected_target
+            if isinstance(expected_target, tuple)
+            else (expected_target,)
+        )
+        if self.uncertainty_score not in allowed:
+            wanted = (
+                f"'{expected_target}'"
+                if isinstance(expected_target, str)
+                else "one of " + ", ".join(f"'{t}'" for t in allowed)
+            )
             msg = (
                 f"wrapper '{self.wrapper}' requires uncertainty_score "
-                f"'{expected_target}', got '{self.uncertainty_score}'. Check the "
+                f"{wanted}, got '{self.uncertainty_score}'. Check the "
                 "'wrapper' and 'uncertainty_score' entries in your config."
             )
             raise ValueError(msg)

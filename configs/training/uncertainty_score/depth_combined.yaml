@@ -1,0 +1,9 @@
+# Track C combined score: weight * ECDF(1 - max prob) + (1 - weight) *
+# ECDF(depth residual), both CDFs fitted on the IN-DOMAIN calib split by
+# src/test.py (after temperature, before the moderation gate) and applied
+# unchanged to a shifted set. Needs `wrapper=depth` and `model=resnet18_depth`;
+# on So-Fake-OOD pair it with `calib_datamodule=sid_set`. weight=1.0
+# reproduces the max-probability ranking, 0.0 the depth-consistency ranking.
+uncertainty_score:
+  _target_: trustfake.metrics.uncertainty.depth.CombinedDepthScore
+  weight: 0.5

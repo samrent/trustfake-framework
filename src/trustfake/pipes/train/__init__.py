@@ -10,6 +10,12 @@ from .confidence_training import (
     ConfidenceAdversarialTrainingModule,
     ConfidenceRegularisedTrainingModule,
 )
+from .depth_auxiliary import (
+    DepthAuxiliaryMixin,
+    DepthPGDAdversarialTrainingModule,
+    DepthStandardTrainingModule,
+    DepthTRADESTrainingModule,
+)
 from .evidential_adversarial_training import EvidentialAdversarialTrainingModule
 from .standard_training import StandardTrainingModule
 
@@ -27,4 +33,9 @@ __all__ = [
     "ConfidenceRegularisedTrainingModule",
     # evidential
     "EvidentialAdversarialTrainingModule",
+    # Track C: auxiliary depth regularisation
+    "DepthAuxiliaryMixin",
+    "DepthStandardTrainingModule",
+    "DepthPGDAdversarialTrainingModule",
+    "DepthTRADESTrainingModule",
 ]

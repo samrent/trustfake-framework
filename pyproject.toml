@@ -41,6 +41,11 @@ dependencies = [
     # Seam-1 VLM port: the CLIP image tower + tokenizer. Imported lazily in
     # trustfake.models.torch.clip so the test suite runs without it.
     "open_clip_torch>=2.24.0",
+    # Track C depth teacher (Depth Anything V2 small). Imported lazily in
+    # trustfake.depth.teacher.load_depth_teacher; the suite uses a stub.
+    # Like open_clip_torch, hand-installed into the box's .venv
+    # (`uv pip install transformers`); uv.lock is stale for both.
+    "transformers>=4.45",
     "ipykernel==7.2.0",
 ]
 

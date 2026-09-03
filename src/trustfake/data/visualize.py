@@ -26,7 +26,7 @@ def visualize_sample(
         )
 
     dataset = getattr(datamodule, _SPLIT_TO_DATASET_ATTR[split])
-    image, label = dataset[index]
+    image, label = dataset[index][:2]
 
     plt.imshow(image.permute(1, 2, 0).numpy())
     plt.title(f"{split} sample #{index} — label: {label.item()}")
