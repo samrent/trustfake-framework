@@ -179,3 +179,10 @@ scorings, G1–G5 recorded, and H(a)–H(d) each answered with a number or "not 
   runbook only: `EVAL_BATCH` (default 8) for every `src/test.py` call; the training batch stays
   32. Attacks reduce per-sample, so no reported number depends on it. Store probe: ~40 img/s,
   ~25 KB/image.
+- 2026-09-03 — **matrix trimmed on cost, PI decision.** A white-box query cell is 400 queries
+  × 125 batches of teacher forwards at 518 px, ~3.5 h each on the 3090; the 16 pre-registered
+  `_wb` query cells were ~56 GPU-hours. Kept: `depth_wb` for `query_underconf` and
+  `query_overconf` on L1 (SID-Set), both depth arms, full `limit_test=1000` — the four cells
+  H(d) reads. Dropped: `combined_wb` (the combined score is read second) and every L2 `_wb`
+  cell. `ace_uint8` keeps its `_wb` cells (gradient-based, cheap). Knobs `WB_DATASETS` /
+  `WB_SCORES` in the runbook restore the full matrix. H(d) is therefore an in-domain number.
