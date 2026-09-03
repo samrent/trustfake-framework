@@ -12,3 +12,4 @@ Every one of these produces a plausible wrong number rather than an error.
 - [fakeclue-train-and-test-share-every-identity.md](fakeclue-train-and-test-share-every-identity.md) — 100% of test identities appear in train; the published splits are contaminated
 - [deterministic-mode-throws-on-median-and-bilinear-backward.md](deterministic-mode-throws-on-median-and-bilinear-backward.md) — green on CPU, dead on the first CUDA step: median(dim) and bilinear backward under deterministic: true
 - [three-scorings-of-one-checkpoint-collide-in-merge-by-key-collators.md](three-scorings-of-one-checkpoint-collide-in-merge-by-key-collators.md) — Track C's three scorings log identical keys; sweep's merge-by-key would keep the last one
+- [robust-clip-checkpoint-availability.md](robust-clip-checkpoint-availability.md) — eps=2 exists only at ViT-L/14; the accuracy/robustness knob is not tunable off-the-shelf at B/32

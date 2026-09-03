@@ -4,7 +4,7 @@ Start here. Read this file plus `handoff/current-state.md`; open other leaves on
 task needs them.
 
 - [handoff/MANIFEST.md](handoff/MANIFEST.md) — where the work actually stands, and how to resume it
-- [gotchas/MANIFEST.md](gotchas/MANIFEST.md) — ten traps that produce plausible wrong numbers, silently
+- [gotchas/MANIFEST.md](gotchas/MANIFEST.md) — eleven traps that produce plausible wrong numbers, silently
 - [decisions/MANIFEST.md](decisions/MANIFEST.md) — choices that constrain what a valid experiment looks like
 - [rejected/MANIFEST.md](rejected/MANIFEST.md) — two hypotheses measured and killed on 2026-08-31
 - [snapshots/MANIFEST.md](snapshots/MANIFEST.md) — dated result tables
