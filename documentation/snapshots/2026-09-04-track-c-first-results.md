@@ -112,3 +112,35 @@ classifier is under attack.
 
 A gradient adaptive attack on the residual; any λ other than 1.0; seeds; Square/AutoAttack on
 the AT pair; L2 white-box; anything against Track A/B arms.
+
+## Data validation pass, 2026-09-04 (after the run)
+
+Checked on the box against the run's own outputs and the parquet metadata:
+
+- **Splits.** fit = 30 train shards, balanced (8,409 / 8,415 / 8,496); calib = 7,059 rows,
+  balanced; test = a deterministic 1,000-row prefix of a shuffled held-out slice, balanced
+  (322 / 362 / 316); calib and test are disjoint by construction (tripwire in the datamodule).
+  No augmentation in `resize` mode, so the precomputed depth targets are pixel-aligned with
+  what the head sees.
+- **The AT arms did not fit three classes.** `pgd_at` clean confusion on L1: real → real 0.38,
+  → tampered 0.62; tampered → real 0.23, → tampered 0.77; synthetic 0.95. After temperature,
+  1 − MSP is 0.505 ± 0.010 on every real and 0.504 ± 0.015 on every tampered image: the model
+  is a coin flip between those two classes and knows it. `pgd_at_depth` is the same shape (real
+  recall 0.46). The G3 failure is a real-vs-tampered collapse, not a uniform 8/255 tax — see
+  `reference/sid-set-geometry-is-a-label` for the cue that adversarial training removed.
+- **Epoch-selection noise swamps both effect sizes.** Validation F1 over the last six epochs
+  has sd 0.062 (`pgd_at`) and 0.065 (`pgd_at_depth`); selection takes the max of twelve such
+  draws. The H(b) gap (+0.040) is under one epoch-to-epoch sd of either arm. For the standard
+  pair the late sd is 0.009–0.013; the H(a) gap (+0.007) is under that too. One seed cannot
+  read either hypothesis.
+- **PGD step count is not the issue.** 50-step PGD at 8/255 (2.5ε/steps step size, random
+  start): `pgd_at` 0.6474 (10-step: 0.6484), `pgd_at_depth` 0.6849 (0.6880). Saturated by 10
+  steps; the +0.04 gap stands at +0.0375. A gradient-free attack remains the masking check.
+- **The depth residual is a weak class signal and no error signal.** On `standard_depth`, clean
+  L1: residual mean 0.39 on synthetic vs 0.54 on tampered (AUROC 0.70 for "not synthetic");
+  within each class its Φ for errors is 0.56–0.57. On `pgd_at_depth` the within-class Φ on
+  reals is 0.36 — inverted. The residual measures how well the head fits the image, which
+  varies by class, not whether the classifier is wrong.
+- **Synthetic is robust for a reason that is not geometry.** Both fake classes are 1024×1024;
+  synthetic recall stays 0.93–0.95 under 50-step PGD on both AT arms while real/tampered sit at
+  chance. Whatever separates synthetic is low-frequency and survives ε = 8/255.
