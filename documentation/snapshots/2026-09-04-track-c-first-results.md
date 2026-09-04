@@ -144,3 +144,34 @@ Checked on the box against the run's own outputs and the parquet metadata:
 - **Synthetic is robust for a reason that is not geometry.** Both fake classes are 1024×1024;
   synthetic recall stays 0.93–0.95 under 50-step PGD on both AT arms while real/tampered sit at
   chance. Whatever separates synthetic is low-frequency and survives ε = 8/255.
+
+## Reading the current data without a rerun, 2026-09-04
+
+Every cell scored the same 1,000 images and stored per-image correctness and score, so every
+difference is paired. Paired bootstrap (5,000 resamples) and McNemar on the selected
+checkpoints; the last six validation epochs of each arm as a second, cheaper read of the
+arm-level effect (same recipe, different draws of the selection lottery).
+
+| hypothesis | paired estimate on the selected checkpoints | 95% CI | arm-level read (val, epochs 6–11) | verdict |
+|---|---:|---|---|---|
+| H(a) clean, depth − standard | +0.006 | [−0.017, +0.030], McNemar p = 0.68 | val acc 0.849 ± 0.009 vs 0.820 ± 0.011 (+0.029) | **no clean effect on the held-out slice**; the +0.03 on the in-fit validation slice did not transfer |
+| H(b) pgd, depth − pgd_at | +0.039 | [+0.008, +0.069], McNemar p = 0.014 (140 vs 101 discordant) | val robust 0.618 ± 0.052 vs 0.608 ± 0.054 (+0.010) | **these two checkpoints differ; the arms do not.** The +0.04 is the selection lottery (max of twelve draws with sd 0.05). Not reproduced. |
+| H(b) clean cost | −0.006 | [−0.030, +0.018] | — | no clean cost |
+| H(c) Φ depth − msp, pgd | +0.042 / −0.127 | [−0.039, +0.123] / [−0.174, −0.082] | — | fails: at best indistinguishable, elsewhere worse |
+| H(c) Φ depth − msp, query_underconf | −0.161 / −0.170 | [−0.224, −0.101] / [−0.212, −0.126] | — | **fails decisively on both arms** |
+| H(d) Φ wb − tr, both query attacks | +0.024, −0.012, +0.002, −0.011 | every CI spans 0 (±0.05–0.09) | — | no white-box drop |
+
+Errors were identical across the msp and depth cells of the same checkpoint and condition
+(the attack is seeded and reads the same objective under transfer scoring), so the H(c) rows
+compare two scores of the same perturbed images.
+
+**What is settled on this run:** the depth head does not change clean accuracy; the
+depth-consistency residual is a worse rejection score than max-probability by 0.10–0.22 with
+CIs that exclude zero; the gradient-free white-box attack does not move it. **What is not
+settled and cannot be from this run:** whether the head buys robust accuracy — the point
+estimate is a checkpoint effect, the trajectory says +0.01 ± 0.05. Reading it needs seeds or a
+selection rule that is not the max of a noisy curve; that is the only rerun the data asks for,
+and it is training-only (the white-box cells are irrelevant to it).
+
+`src/test.py` loads the best (non-`last`) checkpoint by construction, so `last.ckpt` cannot be
+evaluated as a second draw without a code change.
