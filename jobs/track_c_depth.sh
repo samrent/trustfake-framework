@@ -212,6 +212,11 @@ for cond in $CONDS $(for c in $CORRUPTIONS; do echo "corruption_$c"; done); do
       if is_confidence_axis "$cond"; then
         cell "$arm" "$model" "$dataset" "$cond" depth_tr depth depth_consistency transfer
         cell "$arm" "$model" "$dataset" "$cond" combined_tr depth depth_combined transfer
+        # ACE takes its gradient from the predicted-class probability and never
+        # calls the uncertainty score, so a "white-box" ACE cell is the transfer
+        # cell relabelled (measured identical to four decimals, 2026-09-04). Only
+        # the query attacks read the score through attacking(); only they get _wb.
+        case "$cond" in query_*) ;; *) continue;; esac
         case " $WB_DATASETS " in *" $dataset "*)
           for s in $WB_SCORES; do
             case "$s" in

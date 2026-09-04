@@ -2,8 +2,8 @@
 type: spec
 title: Track C — auxiliary depth: multi-task robustness and a depth-consistency rejection score
 status: active
-as_of: 2026-09-03
-source: "registered 2026-09-03 with the code (branch claude/depth-auxiliary-robustness-track-b98707); no number yet"
+as_of: 2026-09-04
+source: "registered 2026-09-03 with the code; first run on the 3090 2026-09-03/04, numbers in snapshots/2026-09-04-track-c-first-results"
 tags: [track-c, experiments, depth, robustness, rejection-score, spec]
 links: [handoff/current-state, decisions/depth-head-lives-in-the-model-group, decisions/ood-thresholds-come-from-in-domain-calib, decisions/track-a-and-track-b-are-separate-tables, gotchas/deterministic-mode-throws-on-median-and-bilinear-backward, gotchas/three-scorings-of-one-checkpoint-collide-in-merge-by-key-collators, gotchas/freezing-a-backbone-must-not-use-no-grad, gotchas/gpu-concurrency-is-negative-on-this-box]
 ---
@@ -12,8 +12,9 @@ links: [handoff/current-state, decisions/depth-head-lives-in-the-model-group, de
 
 **For the executing agent.** Self-contained given this repo plus this brain. Read
 `handoff/current-state.md` and the linked leaves first. Everything runs on the 3090 box from
-`~/Desktop/FILES/PROJECTS/trustfake/framework`; nothing here has been run yet -- the code and
-tests exist, the numbers do not. `jobs/track_c_depth.sh` is the runbook in executable form.
+`~/Desktop/FILES/PROJECTS/trustfake/framework`. **First run complete 2026-09-04** — numbers and
+the H(a)–H(d) verdicts are in `snapshots/2026-09-04-track-c-first-results.md`; this leaf keeps
+the protocol. `jobs/track_c_depth.sh` is the runbook in executable form.
 
 ## Objective
 
@@ -186,3 +187,10 @@ scorings, G1–G5 recorded, and H(a)–H(d) each answered with a number or "not 
   H(d) reads. Dropped: `combined_wb` (the combined score is read second) and every L2 `_wb`
   cell. `ace_uint8` keeps its `_wb` cells (gradient-based, cheap). Knobs `WB_DATASETS` /
   `WB_SCORES` in the runbook restore the full matrix. H(d) is therefore an in-domain number.
+- 2026-09-04 — **first results recorded** (`snapshots/2026-09-04-track-c-first-results`).
+  H(a) no clean effect (+0.0068); H(b) not readable under G3 as written (both AT arms under 0.75;
+  relative +0.0396 under `pgd`, clean −0.0068); H(c) fails on both arms; H(d) drop within ±0.02.
+  Two protocol notes from the run: ACE never reads the score, so its `_wb` cells are `_tr`
+  relabelled and are no longer scheduled (`gotchas/ace-never-reads-the-uncertainty-score`); the
+  G3 floor of 0.75 was set without an 8/255 AT reference (Track A's AT arms: 0.69–0.77) — whether
+  it applies to AT arms is open for the PI. Follow-ups in the snapshot's "not readable" list.
