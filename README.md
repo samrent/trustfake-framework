@@ -1,5 +1,21 @@
 # TrustFake
 
+An evaluation harness for social-media image forgery detectors under adversarial and
+corruption conditions. It trains the usual defence arms (standard, PGD-AT, TRADES, MART,
+AT+KL, confidence-regularised and evidential variants, each with or without AWP) on
+SID-Set and FakeClue, then measures what an accuracy monitor cannot see: failure-detection
+AUROC, risk–coverage and AURC/AUGRC/E-AURC, calibration, and the residual risk a
+moderation pipeline carries when it auto-decides at a fixed clean SLA. The attack taxonomy
+separates attacks on the label from attacks on the confidence (ACE, query attacks), and the
+split protocol keeps fit, calibration and test shard-disjoint.
+
+Built during the TReC 2026 research camp (Project 02, Lausanne, 24 Aug – 4 Sep 2026) on top of
+the framework distributed to participants; see `NOTICE` for provenance and `CHANGELOG.md` for
+what was added. `documentation/` is the open engineering log: decisions, gotchas, snapshots of
+runs and handoffs. Numbers there are preliminary unless a snapshot says otherwise.
+
+License: Apache-2.0 (`LICENSE`, `NOTICE`). Cite with `CITATION.cff`.
+
 ## Requirements
 
 - Git
@@ -611,3 +627,17 @@ docker/               Dockerfile and entrypoint for the dev container
 ```
 
 A pipeline run (`train.py` / `test.py`) reads a Hydra config, uses `Instantiator` to build the datamodule/model/optimizer/etc. from it, then runs the corresponding module from `pipes/` on that setup.
+
+## Datasets and weights
+
+Nothing is redistributed by this repository. `jobs/download_sidset.sh` fetches
+[SID-Set](https://huggingface.co/datasets/saberzl/SID_Set) (CC BY 4.0) and the FakeClue
+datamodule fetches [FakeClue](https://huggingface.co/datasets/lingcco/FakeClue) (Apache-2.0)
+into `${DATA_PATH}`; check each dataset card for terms before use. Pretrained weights come from
+torchvision, `open_clip`, Depth Anything V2 (`transformers`) and
+[fra31/auto-attack](https://github.com/fra31/auto-attack) under their own licenses.
+
+## License and attribution
+
+Apache License 2.0. The first commit imports the TReC 2026 TrustFake framework as received;
+`NOTICE` records what came from it and what was added here.

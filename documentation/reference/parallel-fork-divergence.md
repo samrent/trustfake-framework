@@ -1,9 +1,9 @@
 ---
 type: reference
-title: The colleague fork (trustfake-main-2) — what differs and what it means
+title: A parallel fork of the framework — what differs and what it means
 status: current
 as_of: 2026-08-31
-source: "diffed against a zip copy on 2026-08-31; the colleague was sending a newer zip"
+source: "diffed against a snapshot received 2026-08-31; a newer snapshot was announced"
 tags: [collaboration]
 links: [track-a-and-track-b-are-separate-tables]
 ---

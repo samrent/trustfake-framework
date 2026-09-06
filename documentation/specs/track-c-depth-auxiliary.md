@@ -36,7 +36,7 @@ depth consistency beat max-prob as a rejection score under attack.
 ## Policy constants
 
 - **ε = 8/255** (`adv_eps=0.03137`), 7 inner steps, 2-epoch warm-up — the Track A protocol. Not
-  the colleague's 4/255.
+  the parallel fork's 4/255.
 - **Thresholds and the combined score's reference come from the in-domain calib split**
   (`calib_datamodule=sid_set` on So-Fake-OOD). `src/test.py` fits the combined score's ECDF
   reference there, after temperature and before the moderation gate.

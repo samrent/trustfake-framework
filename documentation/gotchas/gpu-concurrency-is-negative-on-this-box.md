@@ -23,7 +23,7 @@ than one alone. Consumer GeForce cards have no MPS, so concurrent CUDA contexts 
 than overlap, and each process costs 600–1000 MiB of context (N=6 OOM'd).
 
 **Fix.** Run sequentially. `jobs/track_b_chain.sh` does, and waits on `sweep.py` /
-`premise_test.sh` so it will not contend with a colleague's run.
+`premise_test.sh` so it will not contend with another run on the same GPU.
 
 **Also measured, so nobody re-optimises the wrong thing:** batch size buys almost nothing (raw
 model 1.24x from batch 16 to 256), and a ResNet-18 eval peaks at ~439 MiB — so the ~18 GB of local

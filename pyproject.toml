@@ -1,8 +1,12 @@
 [project]
-name = "TrustFake"
+name = "trustfake"
 version = "0.1.0"
-description = ""
+description = "Evaluation harness for social-media image forgery detection under adversarial and corruption conditions: failure detection, selective classification, calibration and moderation-risk metrics on top of adversarial-training arms."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Samuel Renteria" }]
+keywords = ["deepfake-detection", "adversarial-robustness", "selective-classification", "failure-detection", "image-forensics"]
 requires-python = ">=3.11"
 dependencies = [
     "datasets",
@@ -48,6 +52,10 @@ dependencies = [
     "transformers>=4.45",
     "ipykernel==7.2.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/samrent/trustfake-framework"
+Changelog = "https://github.com/samrent/trustfake-framework/blob/main/CHANGELOG.md"
 
 [tool.ruff]
 exclude = [

@@ -10,7 +10,7 @@ links: [ood-thresholds-come-from-in-domain-calib, track-a-and-track-b-are-separa
 
 # Where we are
 
-**Track A (robustness, ResNet-18 EV-AT ladder) is being run by colleagues**, not here. Seven
+**Track A (robustness, ResNet-18 EV-AT ladder) is being run by other team members**, not here. Seven
 trained arms exist in `_runs/out/` with ~90 evaluation conditions; the `query_*` coverage gap
 on the five EV-AT arms is still open (`jobs/premise_test.sh`).
 

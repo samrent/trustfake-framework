@@ -8,7 +8,7 @@ task needs them.
 - [decisions/MANIFEST.md](decisions/MANIFEST.md) — choices that constrain what a valid experiment looks like
 - [rejected/MANIFEST.md](rejected/MANIFEST.md) — two hypotheses measured and killed on 2026-08-31
 - [snapshots/MANIFEST.md](snapshots/MANIFEST.md) — dated result tables
-- [reference/MANIFEST.md](reference/MANIFEST.md) — the colleague repo, and FakeClue's properties
+- [reference/MANIFEST.md](reference/MANIFEST.md) — the parallel fork, and FakeClue's properties
 - [specs/MANIFEST.md](specs/MANIFEST.md) — executable experiment specs; TB-E3 curation ladder registered; Track C (auxiliary depth) registered with its code
 
 **The one-line state (2026-09-03):** Track B's matrix and backbone grid are collated (both

@@ -1,0 +1,21 @@
+TrustFake evaluation harness
+Copyright 2026 Samuel Renteria
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository started from the TrustFake training framework distributed to
+participants of the TReC 2026 research camp (TRAIL / Trust Valley), Project 02,
+by Nicolas Sournac. That framework was imported unchanged in the first commit
+(014053d, 2026-08-25) and is published here with the rest of the code under the
+Apache License 2.0, as part of an open-source research programme. The parts
+authored on top of it — the attack taxonomy and confidence axis, the
+shard-disjoint split protocol, selective-classification, calibration and
+moderation metrics, corruptions, the sweep and baseline tooling, Track B and
+Track C, and the test suite — are by Samuel Renteria.
+
+Datasets are downloaded by the user and never redistributed here:
+  SID-Set  (huggingface.co/datasets/saberzl/SID_Set)   CC BY 4.0
+  FakeClue (huggingface.co/datasets/lingcco/FakeClue)  Apache-2.0
+Pretrained weights are fetched at run time from their own distributions
+(torchvision, open_clip, Depth Anything V2 via transformers, fra31/auto-attack)
+under their respective licenses.
