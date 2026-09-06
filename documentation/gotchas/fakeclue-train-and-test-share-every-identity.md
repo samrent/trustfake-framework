@@ -28,6 +28,6 @@ in the published splits.
 reported, but only as contaminated-by-construction, and never as evidence that multi-dataset
 training worked.
 
-**Who this affects.** The colleague repo's `combined.py` folds FakeClue-train into joint training
+**Who this affects.** The parallel fork's `combined.py` folds FakeClue-train into joint training
 and `eval_fake_clue.py` then evaluates on FakeClue-test — contaminated as shipped. Their advice to
 "watch for data leaks, and evaluate on so-fake-ood" turns out to be two halves of one instruction.

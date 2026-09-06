@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use this harness, please cite it."
+title: "TrustFake: an evaluation harness for image-forgery detectors under attack"
+authors:
+  - family-names: Renteria
+    given-names: Samuel
+version: 0.1.0
+date-released: 2026-09-06
+license: Apache-2.0
+repository-code: "https://github.com/samrent/trustfake-framework"
+keywords:
+  - deepfake detection
+  - adversarial robustness
+  - selective classification
+  - failure detection
