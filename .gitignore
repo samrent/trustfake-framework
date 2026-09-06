@@ -5,3 +5,18 @@ __pycache__/
 logs/
 out/
 *.egg-info/
+# open-source hygiene (2026-09-06)
+.env.*
+!.env.example
+.venv/
+.pytest_cache/
+.ruff_cache/
+.claude/
+_runs/
+*.parquet
+*.npz
+*.npy
+*.pt
+*.pth
+*.ckpt
+*.safetensors

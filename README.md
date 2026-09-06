@@ -12,8 +12,8 @@ For installation, you can either use [`uv`](https://github.com/astral-sh/uv) for
 
 **Step 1: Clone the repository**
 ```bash
-git clone git@github.com:NicolasSournac/TrustFake.git
-cd TrustFake
+git clone https://github.com/samrent/trustfake-framework.git
+cd trustfake-framework
 ```
 
 **Step 2: Configure environment variables**
