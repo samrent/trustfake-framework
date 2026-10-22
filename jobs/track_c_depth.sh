@@ -46,7 +46,16 @@ PY=.venv/bin/python
 TAG="${TAG:-track_c}"
 PROFILE="${PROFILE:-train}"
 EPOCHS="${EPOCHS:-12}"
-BATCH="${BATCH:-32}"
+BATCH="${BATCH:-32}"                 # training batch: the Track A recipe, unchanged
+# Evaluation batch, separate from the recipe. Measured on the 3090 2026-09-03:
+# a white-box attack whose gradient flows through the fp32 teacher at 518 px
+# costs ~0.85 GB per image, so batch 32 (~27 GB) cannot fit a 24 GB card
+# under any circumstances, and the calib pass alone (~9 GB at 32) fails
+# beside the box's resident processes. Batch 8 peaks at ~6.7 GB. Every
+# attack in CONDS reduces per-sample (sum / sign), so the eval batch does
+# not touch any reported number; it only sets the memory footprint.
+EVAL_BATCH="${EVAL_BATCH:-8}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 WORKERS="${WORKERS:-6}"
 LIMIT_TEST="${LIMIT_TEST:-1000}"
 LAMBDAS="${LAMBDAS:-1.0}"            # e.g. "0.1 0.3 1.0" for the sweep
@@ -54,6 +63,15 @@ WITH_TRADES="${WITH_TRADES:-0}"
 CONDS="${CONDS:-clean pgd query_underconf query_overconf ace_uint8}"
 CORRUPTIONS="${CORRUPTIONS:-jpeg}"
 DATASETS="${DATASETS:-sid_set so_fake_ood}"
+# White-box cells through the teacher are the expensive ones: a query attack
+# is 400 queries x (LIMIT_TEST/EVAL_BATCH) batches, each a teacher forward at
+# 518 px (~0.25 s at batch 8), ~3.5 h per cell on the 3090 (measured
+# 2026-09-03). The pre-registered 16 query cells were 56 GPU-hours, so the
+# matrix was trimmed (PI decision 2026-09-03) to what H(d) reads: depth_wb on
+# the in-domain leg. Widen with WB_DATASETS="sid_set so_fake_ood" and
+# WB_SCORES="depth combined" to restore the full matrix.
+WB_DATASETS="${WB_DATASETS:-sid_set}"
+WB_SCORES="${WB_SCORES:-depth}"
 DEPTH_DIR="${DEPTH_DIR:-${DATA_PATH}/sid_set_depth/dav2_small_518_224}"
 TEACHER_INPUT="${TEACHER_INPUT:-518}"  # MUST equal the store's input_size
 ADV_EPS="${ADV_EPS:-0.03137}"          # 8/255, pinned
@@ -118,7 +136,7 @@ step "smoke__depth_score" \
     uncertainty_score=depth_combined datamodule.datamodule.profile=smoke \
     "datamodule.datamodule.limit_test=${SMOKE_LIMIT:-64}" \
     "depth_teacher_input_size=${TEACHER_INPUT}" depth_attack_scoring=white_box \
-    +attack=fgsm "dataloaders.batch_size=${BATCH}" "dataloaders.num_workers=${WORKERS}" \
+    +attack=fgsm "dataloaders.batch_size=${EVAL_BATCH}" "dataloaders.num_workers=${WORKERS}" \
   || { say "smoke eval FAILED: fix before the chain"; exit 1; }
 # The CPU suite proves the white-box gradient in fp32 only; this proves it
 # on the device the numbers will come from.
@@ -168,7 +186,7 @@ cell() {  # cell <arm> <model> <dataset> <cond> <score-key> <wrapper> <score-yam
   local args=(
     "experiment.name=${TAG}_${arm}" "model=${model}" "wrapper=${wrapper}"
     "uncertainty_score=${yaml}" "datamodule.datamodule.limit_test=${LIMIT_TEST}"
-    "dataloaders.batch_size=${BATCH}" "dataloaders.num_workers=${WORKERS}"
+    "dataloaders.batch_size=${EVAL_BATCH}" "dataloaders.num_workers=${WORKERS}"
   )
   case "$dataset" in
     sid_set)     args+=("datamodule.datamodule.profile=${PROFILE}");;
@@ -194,8 +212,19 @@ for cond in $CONDS $(for c in $CORRUPTIONS; do echo "corruption_$c"; done); do
       if is_confidence_axis "$cond"; then
         cell "$arm" "$model" "$dataset" "$cond" depth_tr depth depth_consistency transfer
         cell "$arm" "$model" "$dataset" "$cond" combined_tr depth depth_combined transfer
-        cell "$arm" "$model" "$dataset" "$cond" depth_wb depth depth_consistency white_box
-        cell "$arm" "$model" "$dataset" "$cond" combined_wb depth depth_combined white_box
+        # ACE takes its gradient from the predicted-class probability and never
+        # calls the uncertainty score, so a "white-box" ACE cell is the transfer
+        # cell relabelled (measured identical to four decimals, 2026-09-04). Only
+        # the query attacks read the score through attacking(); only they get _wb.
+        case "$cond" in query_*) ;; *) continue;; esac
+        case " $WB_DATASETS " in *" $dataset "*)
+          for s in $WB_SCORES; do
+            case "$s" in
+              depth)    cell "$arm" "$model" "$dataset" "$cond" depth_wb depth depth_consistency white_box;;
+              combined) cell "$arm" "$model" "$dataset" "$cond" combined_wb depth depth_combined white_box;;
+            esac
+          done;;
+        esac
       else
         cell "$arm" "$model" "$dataset" "$cond" depth depth depth_consistency transfer
         cell "$arm" "$model" "$dataset" "$cond" combined depth depth_combined transfer

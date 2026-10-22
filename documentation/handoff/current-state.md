@@ -2,7 +2,7 @@
 type: handoff
 title: Track A / B / C state, and how to resume
 status: current
-as_of: 2026-09-03
+as_of: 2026-09-04
 source: "Track B state from the box 2026-08-31/09-01; Track C built on the Mac 2026-09-03, not run"
 tags: [experiments, track-a, track-b, track-c]
 links: [ood-thresholds-come-from-in-domain-calib, track-a-and-track-b-are-separate-tables, depth-head-lives-in-the-model-group, specs/track-c-depth-auxiliary, 2026-09-01-track-b-full-matrix, 2026-09-01-backbone-grid]
@@ -20,7 +20,7 @@ stabilises Φ under the query attack at a clean-accuracy cost, and patch size do
 tampered recall (`snapshots/2026-09-01-*`). TB-E3, the curation ladder, is registered and
 waiting (`specs/tb-e3-curation-ladder.md`).
 
-**Track C (does monocular depth add value?) is BUILT, TESTED ON THE MAC, and NOT RUN.** Branch
+**Track C (does monocular depth add value?) has its first run — see the section below and the 2026-09-04 snapshot.** It was Branch
 `claude/depth-auxiliary-robustness-track-b98707`, commits in reviewable steps; 922 tests and
 ruff green. The spec with pre-registered decision rules is `specs/track-c-depth-auxiliary.md`;
 the executable runbook is `jobs/track_c_depth.sh`. Design decisions in
@@ -75,6 +75,48 @@ the executable runbook is `jobs/track_c_depth.sh`. Design decisions in
   processes are the first thing to stop, not the batch size. Sequential only.
 - In a box worktree `.venv` is not gitignored (only `.env` is): never `git add -A` there.
 - Local `main` on the box is behind `origin/main`; a plain `git pull` fast-forwards it.
+
+## Track C — first run complete, 2026-09-04
+
+Chain ran 2026-09-03 15:30 → 2026-09-04 09:50 UTC on the box from worktree
+`claude/track-c-depth-auxiliary-944efa` (origin has the branch; PR pending). 102 cells, 0 failed,
+collated to `RESULTS_track_c.md`; backup `_runs/backups/track_c-20260904-0950.tar.gz` (1,731
+files: the four arms, the smoke, both log dirs, the store manifest). Numbers and verdicts:
+`snapshots/2026-09-04-track-c-first-results.md`.
+
+**One-line result.** The depth head buys no clean accuracy (+0.007), a +0.040 PGD bump on the
+AT pair that G3 refuses to read (both AT arms under 0.75 clean — the 8/255 cost, see the
+snapshot), and the depth-consistency residual is a worse rejection score than max-probability
+everywhere except under ACE, which never targets it. The white-box query attack moves the
+residual's Φ by less than 0.02.
+
+**Things changed by the run** (all committed on the branch):
+- `jobs/track_c_depth.sh`: `EVAL_BATCH` (default 8), `WB_DATASETS` / `WB_SCORES` (white-box
+  query cells on L1, depth score only), and no `_wb` cells for ACE.
+- New leaves: the snapshot, `gotchas/ace-never-reads-the-uncertainty-score`,
+  `decisions/track-c-white-box-cells-are-in-domain-only`.
+- Box: `transformers==5.16.1` in `.venv`; teacher cached under `/scratch/models/huggingface`
+  (`~/.cache/huggingface` is a symlink there); depth store at
+  `$DATA_PATH/sid_set_depth/dav2_small_518_224` (569 MB) plus the smoke store.
+
+**Open for the PI**
+1. Does G3's 0.75 floor apply to 8/255 AT arms? If not, H(b) reads as a reproduced bump on one
+   seed — pending the Square/AutoAttack run on `pgd_at` vs `pgd_at_depth_l1.0` (the
+   gradient-masking check; the depth arm's PGD drop is 0.0055 vs 0.052).
+2. The depth score as a rejection score is dead on this evidence unless a different residual is
+   proposed (per-image SSI-L1 is dominated by fit quality, Φ 0.58 on clean). A λ ladder or seeds
+   will not change H(c).
+3. Follow-up that would change H(d)'s meaning: a gradient adaptive attack whose loss also
+   minimises the residual.
+
+Rerun / extend:
+
+```bash
+LOGS=$(grep ^LOGS_PATH .env | cut -d= -f2)/track_c_depth
+PYTHONPATH=$PWD/src LAMBDAS="0.1 0.3 1.0" setsid bash jobs/track_c_depth.sh   # the λ ladder; done steps skip
+PYTHONPATH=$PWD/src WB_DATASETS="sid_set so_fake_ood" WB_SCORES="depth combined" setsid bash jobs/track_c_depth.sh  # full wb matrix, ~30 h
+python3 jobs/summarise_track_c.py $LOGS > RESULTS_track_c.md
+```
 
 ## Blockers
 
